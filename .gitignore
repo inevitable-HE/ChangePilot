@@ -1,0 +1,36 @@
+# Local Codex and Comet state
+.codex/settings.local.json
+.comet/current-change.json
+
+# Personal interview materials
+resume_draft.md
+*.pdf
+
+# Temporary files
+tmp/
+
+# Python environments and caches
+.venv/
+__pycache__/
+.pytest_cache/
+.hypothesis/
+*.py[cod]
+
+# Build and coverage output
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Local databases and logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
