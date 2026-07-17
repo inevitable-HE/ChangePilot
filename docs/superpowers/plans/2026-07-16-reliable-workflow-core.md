@@ -550,7 +550,7 @@ git commit -m "feat: persist workflow runtime in sqlite"
 - Consumes: definition-time `ToolCatalog` from Task 1.
 - Produces: `ToolDescriptor`, `Tool`, `ToolRegistry`, `ToolExecutionContext`, `ToolResult`, `RecoveryResult`, `SecretRef`, `redact()`, and `logical_idempotency_key()`.
 
-- [ ] **Step 1: Write failing registration, schema, secret, and key tests**
+- [x] **Step 1: Write failing registration, schema, secret, and key tests**
 
 ```python
 # tests/unit/test_idempotency.py
@@ -580,13 +580,13 @@ def test_redacts_declared_paths_and_secret_references() -> None:
     assert redact(payload, sensitive_paths={"token"}) == {"token": "[REDACTED]", "nested": {"password": {"provider": "env", "key": "[REDACTED]"}}}
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for tool boundary, redaction, and idempotency tests**
 
 Run: `python -m pytest tests/unit/test_tool_registry.py tests/unit/test_redaction.py tests/unit/test_idempotency.py -q`
 
 Expected: FAIL because tool boundary types are not implemented.
 
-- [ ] **Step 3: Implement typed descriptors, explicit registry, recursive redaction, fake ledger, and SHA-256 keys**
+- [x] **Step 3: Implement typed descriptors, explicit registry, recursive redaction, fake ledger, and SHA-256 keys**
 
 ```python
 # src/changepilot/workflow/ports/tools.py
@@ -620,13 +620,13 @@ class Tool(Protocol):
 
 Reject duplicate `(name, version)`, descriptor timeouts less than or equal to zero, undeclared arguments, and registration of output models that are not Pydantic models. Fake Tool must use an independent JSON-lines ledger keyed by the logical idempotency key so process tests can count external effects.
 
-- [ ] **Step 4: Verify GREEN and secret leakage scan tests**
+- [x] **Step 4: Verify GREEN and secret leakage scan tests**
 
 Run: `python -m pytest tests/unit/test_tool_registry.py tests/unit/test_redaction.py tests/unit/test_idempotency.py -q`
 
 Expected: PASS; serialized test events and exceptions contain neither `plain` nor `DB_PASSWORD`.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```bash
 git add src/changepilot/workflow/ports/tools.py src/changepilot/workflow/application/tooling.py src/changepilot/workflow/adapters/tools tests/unit/test_tool_registry.py tests/unit/test_redaction.py tests/unit/test_idempotency.py
