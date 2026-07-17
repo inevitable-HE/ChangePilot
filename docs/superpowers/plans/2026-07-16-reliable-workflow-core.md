@@ -25,6 +25,7 @@ base-ref: 64eaa1c323836383d78de1310881a446083957d0
 - 密钥使用 `SecretRef` 表示；持久化参数、结果、错误、事件和审批快照必须脱敏。
 - 外部副作用采用至少一次调度和稳定逻辑幂等键，不得宣称 exactly-once。
 - 核心测试必须能在 Windows 与 WSL2 上脱离 DeepSeek、网络、Docker、PostgreSQL 和真实服务或数据库连接运行。
+- Windows 开发环境使用 `C:\\Users\\kevinyuan\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe -m venv .venv` 创建 Python 3.12 虚拟环境；后续计划中的 `python` 命令均由 `.venv\\Scripts\\python.exe` 执行。
 
 ## 计划文件结构
 
@@ -101,7 +102,7 @@ tests/
 
 ---
 
-### 任务 1：项目基线与不可变工作流定义
+### Task 1：项目基线与不可变工作流定义
 
 **Files:**
 - Create: `pyproject.toml`
@@ -179,9 +180,13 @@ def test_equivalent_payloads_have_the_same_digest() -> None:
 
 - [ ] **Step 2: Install the editable project and verify RED**
 
-Run: `python -m pip install -e ".[dev]"`
+Run: `C:\Users\kevinyuan\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv`
 
-Run: `python -m pytest tests/unit/test_definition_validation.py -q`
+Expected: 创建使用 Python 3.12 的 `.venv`。
+
+Run: `.venv\Scripts\python.exe -m pip install -e ".[dev]"`
+
+Run: `.venv\Scripts\python.exe -m pytest tests/unit/test_definition_validation.py -q`
 
 Expected: FAIL during import because `changepilot.workflow.domain.definitions` does not exist.
 
@@ -260,7 +265,7 @@ git add pyproject.toml src/changepilot tests/unit/test_definition_validation.py
 git commit -m "feat: validate immutable workflow definitions"
 ```
 
-### 任务 2：显式运行与步骤状态机
+### Task 2：显式运行与步骤状态机
 
 **Files:**
 - Create: `src/changepilot/workflow/domain/states.py`
@@ -350,7 +355,7 @@ git add src/changepilot/workflow/domain tests/unit/test_state_machines.py
 git commit -m "feat: add deterministic workflow state machines"
 ```
 
-### 任务 3：持久化端口、内存 Unit of Work 与事件原子性
+### Task 3：持久化端口、内存 Unit of Work 与事件原子性
 
 **Files:**
 - Create: `src/changepilot/workflow/ports/persistence.py`
@@ -448,7 +453,7 @@ git add src/changepilot/workflow/ports src/changepilot/workflow/adapters tests/c
 git commit -m "feat: add transactional persistence ports"
 ```
 
-### 任务 4：SQLite Schema、Alembic 迁移与契约适配器
+### Task 4：SQLite Schema、Alembic 迁移与契约适配器
 
 **Files:**
 - Create: `alembic.ini`
@@ -530,7 +535,7 @@ git add alembic.ini alembic src/changepilot/workflow/adapters/persistence tests/
 git commit -m "feat: persist workflow runtime in sqlite"
 ```
 
-### 任务 5：工具注册、边界 Schema、脱敏与幂等键
+### Task 5：工具注册、边界 Schema、脱敏与幂等键
 
 **Files:**
 - Modify: `src/changepilot/workflow/ports/tools.py`
@@ -628,7 +633,7 @@ git add src/changepilot/workflow/ports/tools.py src/changepilot/workflow/applica
 git commit -m "feat: add safe versioned tool contracts"
 ```
 
-### 任务 6：确定性调度器、执行尝试、重试策略与协调器
+### Task 6：确定性调度器、执行尝试、重试策略与协调器
 
 **Files:**
 - Create: `src/changepilot/workflow/application/scheduler.py`
@@ -712,7 +717,7 @@ git add src/changepilot/workflow/application tests/unit/test_scheduler.py tests/
 git commit -m "feat: coordinate deterministic workflow execution"
 ```
 
-### 任务 7：持久化全局审批屏障
+### Task 7：持久化全局审批屏障
 
 **Files:**
 - Create: `src/changepilot/workflow/application/approvals.py`
@@ -775,7 +780,7 @@ git add src/changepilot/workflow/application/approvals.py src/changepilot/workfl
 git commit -m "feat: enforce durable approval barriers"
 ```
 
-### 任务 8：崩溃恢复、探测语义与未知结果
+### Task 8：崩溃恢复、探测语义与未知结果
 
 **Files:**
 - Create: `src/changepilot/workflow/application/recovery.py`
@@ -847,7 +852,7 @@ git add src/changepilot/workflow/application/recovery.py tests/integration/test_
 git commit -m "feat: recover interrupted workflow attempts"
 ```
 
-### 任务 9：逆依赖补偿与失败信息保留
+### Task 9：逆依赖补偿与失败信息保留
 
 **Files:**
 - Modify: `src/changepilot/workflow/application/scheduler.py`
@@ -921,7 +926,7 @@ git add src/changepilot/workflow/application/scheduler.py src/changepilot/workfl
 git commit -m "feat: compensate completed workflow effects"
 ```
 
-### 任务 10：应用服务、订单升级验收场景与文档
+### Task 10：应用服务、订单升级验收场景与文档
 
 **Files:**
 - Create: `src/changepilot/workflow/application/services.py`

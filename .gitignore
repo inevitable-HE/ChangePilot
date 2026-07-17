@@ -9,6 +9,7 @@ resume_draft.md
 # Temporary files
 tmp/
 .worktrees/
+.superpowers/
 
 # Python environments and caches
 .venv/
