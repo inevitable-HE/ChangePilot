@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timedelta
-from threading import Lock
+from threading import Condition, Event, Lock
 from typing import Callable
 
 from pydantic import BaseModel, ConfigDict
@@ -67,6 +67,7 @@ class ScriptedTool:
         )
         self._script: deque[str] = deque()
         self._lock = Lock()
+        self._calls_changed = Condition(self._lock)
         self.calls: list[ToolExecutionContext] = []
 
     def script(self, outcomes: list[str]) -> None:
@@ -80,6 +81,7 @@ class ScriptedTool:
     ) -> ToolExecutionResult:
         with self._lock:
             self.calls.append(context)
+            self._calls_changed.notify_all()
             outcome = self._script.popleft() if self._script else "success"
         if outcome == "success":
             return ToolExecutionResult(
@@ -94,6 +96,67 @@ class ScriptedTool:
 
     def probe(self, query: RecoveryQuery) -> ToolProbeResult:
         return ToolProbeResult(status=ToolProbeStatus.INCONCLUSIVE)
+
+    def wait_for_calls(self, count: int, *, timeout: float = 1.0) -> bool:
+        with self._calls_changed:
+            return self._calls_changed.wait_for(
+                lambda: len(self.calls) >= count,
+                timeout=timeout,
+            )
+
+
+class BlockingTool(ScriptedTool):
+    def __init__(self, name: str, *, blocked_step_id: str | None = None) -> None:
+        super().__init__(name)
+        self.blocked_step_id = blocked_step_id
+        self.started = Event()
+        self.fast_completed = Event()
+        self.finished = Event()
+        self.release = Event()
+
+    def execute(
+        self,
+        context: ToolExecutionContext,
+        arguments: FakeArguments,
+    ) -> ToolExecutionResult:
+        try:
+            if self.blocked_step_id is None or context.step_id == self.blocked_step_id:
+                self.started.set()
+                if not self.release.wait(timeout=5):
+                    raise AssertionError("blocking tool was not released")
+            else:
+                self.fast_completed.set()
+            return super().execute(context, arguments)
+        finally:
+            self.finished.set()
+
+
+class ConcurrencyTrackingTool(ScriptedTool):
+    def __init__(self, name: str, *, expected_peak: int) -> None:
+        super().__init__(name)
+        self.expected_peak = expected_peak
+        self.active = 0
+        self.peak_active = 0
+        self.capacity_reached = Event()
+        self.release = Event()
+
+    def execute(
+        self,
+        context: ToolExecutionContext,
+        arguments: FakeArguments,
+    ) -> ToolExecutionResult:
+        with self._lock:
+            self.active += 1
+            self.peak_active = max(self.peak_active, self.active)
+            if self.active == self.expected_peak:
+                self.capacity_reached.set()
+        try:
+            if not self.release.wait(timeout=5):
+                raise AssertionError("concurrency tracking tool was not released")
+            return super().execute(context, arguments)
+        finally:
+            with self._lock:
+                self.active -= 1
 
 
 class ToolScripts:

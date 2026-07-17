@@ -97,6 +97,7 @@ class UnitOfWorkContract:
     @pytest.fixture
     def persistence_modules(self):
         return {
+            "events": _load_module("changepilot.workflow.domain.events"),
             "ports": _load_module("changepilot.workflow.ports.persistence"),
             "runs": _load_module("changepilot.workflow.domain.runs"),
             "states": _load_module("changepilot.workflow.domain.states"),
@@ -204,6 +205,36 @@ class UnitOfWorkContract:
         with self.make_uow(adapter_modules, store) as uow:
             assert uow.definitions.get("definition-1", 1) is None
             assert uow.runs.get("run-1") is None
+
+    def test_attempt_audit_event_round_trips_with_structured_payload(
+        self,
+        adapter_modules,
+        persistence_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+        event = persistence_modules["events"].AuditEvent.tool_attempt_completed(
+            run_id="run-1",
+            step_id="inspect",
+            attempt_id="attempt-1",
+            attempt_no=1,
+            phase="forward",
+            occurred_at=OCCURRED_AT,
+            state="succeeded",
+            revision=2,
+            error_class=None,
+            summary={"status": "success", "result": {"value": "checked"}},
+        )
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.events.append(event)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            persisted = uow.events.list("run-1")
+
+        assert [entry.sequence for entry in persisted] == [1]
+        assert persisted[0].event == event
 
     def test_explicit_rollback_is_idempotent(
         self,

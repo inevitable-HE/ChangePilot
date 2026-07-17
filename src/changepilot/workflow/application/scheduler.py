@@ -9,6 +9,14 @@ def ready_steps(
     definition: WorkflowDefinition,
     step_runs: tuple[StepRun, ...],
 ) -> tuple[StepDefinition, ...]:
+    step_run_ids = tuple(step_run.step_id for step_run in step_runs)
+    if len(step_run_ids) != len(set(step_run_ids)):
+        raise ValueError("duplicate step run IDs")
+    if set(step_run_ids) != {step.id for step in definition.steps}:
+        raise ValueError("step run IDs must exactly match definition")
+    if len({step_run.run_id for step_run in step_runs}) != 1:
+        raise ValueError("step runs must belong to exactly one run")
+
     runs_by_step = {step_run.step_id: step_run for step_run in step_runs}
     depths = _topological_depths(definition)
     ready = (

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Callable
@@ -14,6 +14,7 @@ from changepilot.workflow.application.tooling import (
     redact,
 )
 from changepilot.workflow.domain.definitions import StepDefinition, WorkflowDefinition
+from changepilot.workflow.domain.events import AuditEvent
 from changepilot.workflow.domain.failures import DomainError, ErrorClass
 from changepilot.workflow.domain.runs import StepRun
 from changepilot.workflow.domain.states import RunState, StepState
@@ -73,6 +74,22 @@ class _ExecutionRequest:
     arguments: BaseModel
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedAttempt:
+    step: StepDefinition
+    attempt: StepAttempt
+    request: _ExecutionRequest
+    sensitive_paths: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class _OwnedFuture:
+    request: _ExecutionRequest
+    future: Future[ExecutionOutcome]
+    sensitive_paths: tuple[str, ...]
+    outcome_persisted: bool = False
+
+
 class Coordinator:
     def __init__(
         self,
@@ -96,25 +113,53 @@ class Coordinator:
         self._identifiers = identifiers
         self._run_id_selector = run_id_selector
         self._concurrency = concurrency
+        self._executor = ThreadPoolExecutor(
+            max_workers=concurrency,
+            thread_name_prefix="changepilot-tool",
+        )
+        self._owned_futures: dict[Future[ExecutionOutcome], _OwnedFuture] = {}
+        self._closed = False
 
     def run_once(self) -> CoordinationReport:
+        if self._closed:
+            return CoordinationReport(run_id=None, blocked_reason="coordinator_closed")
+
         run_id = self._run_id_selector()
         if run_id is None:
             return CoordinationReport(run_id=None, blocked_reason="no_run_selected")
 
+        completed, collection_failed = self._collect_outcomes()
+
         with self._uow_factory() as uow:
             selected_run = uow.runs.get(run_id)
         if selected_run is not None and selected_run.state in _TERMINAL_RUN_STATES:
-            return CoordinationReport(run_id=run_id, blocked_reason="run_terminal")
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="run_terminal",
+            )
+        if selected_run is not None and selected_run.state not in _FORWARD_RUN_STATES:
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="run_not_forward",
+            )
+        if collection_failed:
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason=ErrorClass.INTERNAL_CONSISTENCY.value,
+            )
 
         self._promote_due_retries(run_id)
         self._promote_dependency_ready_steps(run_id)
         definition, step_runs = self._load_definition_and_steps(run_id)
+        available_capacity = self._available_capacity()
         candidates = tuple(
             step
             for step in ready_steps(definition, step_runs)
             if _step_run(step_runs, step.id).state is StepState.READY
-        )[: self._concurrency]
+        )[:available_capacity]
         if not candidates:
             with self._uow_factory() as uow:
                 run = uow.runs.get(run_id)
@@ -128,23 +173,85 @@ class Coordinator:
                 blocked_reason = "in_flight"
             else:
                 blocked_reason = ErrorClass.INTERNAL_CONSISTENCY.value
-            return CoordinationReport(run_id=run_id, blocked_reason=blocked_reason)
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason=blocked_reason,
+            )
 
-        requests = tuple(self._start_attempt(run_id, step) for step in candidates)
-        with ThreadPoolExecutor(max_workers=self._concurrency) as executor:
-            futures = tuple(executor.submit(_execute_request, request) for request in requests)
-            outcomes = tuple(future.result() for future in futures)
+        try:
+            prepared_attempts = tuple(
+                self._prepare_attempt(run_id, step) for step in candidates
+            )
+        except Exception:
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason=ErrorClass.INTERNAL_CONSISTENCY.value,
+            )
 
-        for outcome in outcomes:
-            self._persist_outcome(outcome)
+        dispatched: list[str] = []
+        for prepared in prepared_attempts:
+            self._commit_attempt_started(prepared)
+            dispatched.append(prepared.step.id)
+            try:
+                future = self._executor.submit(_execute_request, prepared.request)
+            except Exception:
+                self._persist_outcome(
+                    _failed_outcome(
+                        prepared.request,
+                        error_class=ErrorClass.RETRYABLE,
+                        safe_message="tool submission failed",
+                    ),
+                    sensitive_paths=prepared.sensitive_paths,
+                )
+                continue
+            self._owned_futures[future] = _OwnedFuture(
+                request=prepared.request,
+                future=future,
+                sensitive_paths=prepared.sensitive_paths,
+            )
+
+        just_completed, collection_failed = self._collect_outcomes()
+        completed += just_completed
 
         return CoordinationReport(
             run_id=run_id,
-            dispatched=tuple(step.id for step in candidates),
-            completed=tuple(
-                outcome.step_id for outcome in outcomes if outcome.status == "success"
+            dispatched=tuple(dispatched),
+            completed=_completed_for_run(completed, run_id),
+            blocked_reason=(
+                ErrorClass.INTERNAL_CONSISTENCY.value if collection_failed else None
             ),
         )
+
+    def close(self, *, wait: bool = False) -> None:
+        if self._closed and not wait:
+            return
+
+        self._collect_outcomes()
+        if wait:
+            self._executor.shutdown(wait=True, cancel_futures=False)
+            self._collect_outcomes()
+        else:
+            for owned in tuple(self._owned_futures.values()):
+                if owned.outcome_persisted or owned.future.done():
+                    continue
+                if owned.future.cancel():
+                    outcome = _failed_outcome(
+                        owned.request,
+                        error_class=ErrorClass.RETRYABLE,
+                        safe_message="tool submission cancelled",
+                    )
+                else:
+                    outcome = _failed_outcome(
+                        owned.request,
+                        error_class=ErrorClass.RESULT_UNKNOWN,
+                        safe_message="tool result unknown",
+                    )
+                self._persist_outcome(outcome, sensitive_paths=owned.sensitive_paths)
+                owned.outcome_persisted = True
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        self._closed = True
 
     def _promote_due_retries(self, run_id: str) -> None:
         now = _parse_timestamp(self._clock.now())
@@ -218,61 +325,82 @@ class Coordinator:
             raise RuntimeError(f"run {run_id} is missing step state")
         return definition, tuple(step_runs)
 
-    def _start_attempt(self, run_id: str, step: StepDefinition) -> _ExecutionRequest:
+    def _available_capacity(self) -> int:
+        active = sum(
+            not owned.future.done()
+            for owned in self._owned_futures.values()
+        )
+        return max(0, self._concurrency - active)
+
+    def _collect_outcomes(self) -> tuple[tuple[ExecutionOutcome, ...], bool]:
+        now = _parse_timestamp(self._clock.now())
+        persisted: list[ExecutionOutcome] = []
+        persistence_failed = False
+        for future, owned in tuple(self._owned_futures.items()):
+            if owned.outcome_persisted:
+                if future.done():
+                    _consume_late_future(future)
+                    del self._owned_futures[future]
+                continue
+
+            if future.done():
+                outcome = _outcome_from_future(owned)
+            elif now >= owned.request.context.deadline:
+                outcome = _failed_outcome(
+                    owned.request,
+                    error_class=ErrorClass.RESULT_UNKNOWN,
+                    safe_message="tool result unknown",
+                )
+            else:
+                continue
+
+            try:
+                self._persist_outcome(
+                    outcome,
+                    sensitive_paths=owned.sensitive_paths,
+                )
+            except Exception:
+                persistence_failed = True
+                continue
+
+            persisted.append(outcome)
+            owned.outcome_persisted = True
+            if future.done():
+                del self._owned_futures[future]
+        return tuple(persisted), persistence_failed
+
+    def _prepare_attempt(
+        self,
+        run_id: str,
+        step: StepDefinition,
+    ) -> _PreparedAttempt:
         with self._uow_factory() as uow:
             run = uow.runs.get(run_id)
             if run is None:
                 raise LookupError(f"unknown run {run_id}")
-            if run.state is RunState.PENDING:
-                running_run, run_event = run.transition(
-                    RunState.RUNNING,
-                    occurred_at=self._clock.now(),
-                )
-                uow.runs.save(running_run, expected_revision=run.revision)
-                uow.events.append(run_event)
-
             step_run = uow.steps.get(run_id, step.id)
             if step_run is None:
                 raise LookupError(f"unknown step {run_id}:{step.id}")
-            running_step, step_event = step_run.transition(
-                StepState.RUNNING,
-                occurred_at=self._clock.now(),
-            )
             attempts = uow.attempts.list(run_id, step_id=step.id)
-            attempt_no = max((attempt.attempt_no for attempt in attempts), default=0) + 1
-            key = logical_idempotency_key(
-                run_id=run_id,
-                step_id=step.id,
-                tool_name=step.tool.name,
-                tool_version=step.tool.version,
-                phase=ToolExecutionPhase.FORWARD,
-            )
-            started_at = self._clock.now()
-            attempt = StepAttempt(
-                run_id=run_id,
-                step_id=step.id,
-                attempt_no=attempt_no,
-                phase=ToolExecutionPhase.FORWARD.value,
-                attempt_id=self._identifiers.new(),
-                status="running",
-                idempotency_key=key,
-                started_at=started_at,
-            )
-            uow.steps.save(running_step, expected_revision=step_run.revision)
-            uow.attempts.add(attempt)
-            uow.events.append(step_event)
-            uow.commit()
-
         tool = self._tools.resolve(step.tool.name, step.tool.version)
         arguments = self._tools.coerce_arguments(
             step.tool.name,
             step.tool.version,
             step.arguments,
         )
+        attempt_no = max((attempt.attempt_no for attempt in attempts), default=0) + 1
+        key = logical_idempotency_key(
+            run_id=run_id,
+            step_id=step.id,
+            tool_name=step.tool.name,
+            tool_version=step.tool.version,
+            phase=ToolExecutionPhase.FORWARD,
+        )
+        started_at = self._clock.now()
         deadline = _parse_timestamp(started_at) + timedelta(
             seconds=tool.descriptor.default_timeout_seconds
         )
-        return _ExecutionRequest(
+        request = _ExecutionRequest(
             tool=tool,
             context=ToolExecutionContext(
                 run_id=run_id,
@@ -285,8 +413,68 @@ class Coordinator:
             ),
             arguments=arguments,
         )
+        return _PreparedAttempt(
+            step=step,
+            attempt=StepAttempt(
+                run_id=run_id,
+                step_id=step.id,
+                attempt_no=attempt_no,
+                phase=ToolExecutionPhase.FORWARD.value,
+                attempt_id=self._identifiers.new(),
+                status="running",
+                idempotency_key=key,
+                started_at=started_at,
+            ),
+            request=request,
+            sensitive_paths=tool.descriptor.sensitive_argument_paths,
+        )
 
-    def _persist_outcome(self, outcome: ExecutionOutcome) -> None:
+    def _commit_attempt_started(self, prepared: _PreparedAttempt) -> None:
+        attempt = prepared.attempt
+        with self._uow_factory() as uow:
+            run = uow.runs.get(attempt.run_id)
+            if run is None:
+                raise LookupError(f"unknown run {attempt.run_id}")
+            if run.state is RunState.PENDING:
+                running_run, run_event = run.transition(
+                    RunState.RUNNING,
+                    occurred_at=attempt.started_at,
+                )
+                uow.runs.save(running_run, expected_revision=run.revision)
+                uow.events.append(run_event)
+            elif run.state is not RunState.RUNNING:
+                raise RuntimeError("run is not in a forward execution state")
+
+            step_run = uow.steps.get(attempt.run_id, attempt.step_id)
+            if step_run is None:
+                raise LookupError(f"unknown step {attempt.run_id}:{attempt.step_id}")
+            running_step, step_event = step_run.transition(
+                StepState.RUNNING,
+                occurred_at=attempt.started_at,
+            )
+            uow.steps.save(running_step, expected_revision=step_run.revision)
+            uow.attempts.add(attempt)
+            uow.events.append(step_event)
+            uow.events.append(
+                AuditEvent.tool_attempt_started(
+                    run_id=attempt.run_id,
+                    step_id=attempt.step_id,
+                    attempt_id=attempt.attempt_id,
+                    attempt_no=attempt.attempt_no,
+                    phase=attempt.phase,
+                    occurred_at=attempt.started_at,
+                    state=running_step.state.value,
+                    revision=running_step.revision,
+                )
+            )
+            uow.commit()
+
+    def _persist_outcome(
+        self,
+        outcome: ExecutionOutcome,
+        *,
+        sensitive_paths: tuple[str, ...],
+    ) -> None:
         with self._uow_factory() as uow:
             run = uow.runs.get(outcome.run_id)
             if run is None:
@@ -331,28 +519,44 @@ class Coordinator:
                 next_state,
                 occurred_at=completed_at,
             )
+            redacted_result = redact(
+                outcome.result,
+                sensitive_paths=sensitive_paths,
+            )
             completed_attempt = replace(
                 attempt,
                 status=outcome.status,
                 completed_at=completed_at,
                 next_attempt_at=next_attempt_at,
-                result=redact(
-                    outcome.result,
-                    sensitive_paths=self._tools.descriptor_for(
-                        step_definition.tool.name,
-                        step_definition.tool.version,
-                    ).sensitive_argument_paths,
-                ),
+                result=redacted_result,
                 error_class=outcome.error_class,
                 error_message=outcome.error_message,
             )
             uow.steps.save(changed_step, expected_revision=step_run.revision)
             uow.attempts.save(completed_attempt)
             uow.events.append(event)
-            if next_state is StepState.SUCCEEDED and all(
+            uow.events.append(
+                AuditEvent.tool_attempt_completed(
+                    run_id=outcome.run_id,
+                    step_id=outcome.step_id,
+                    attempt_id=attempt.attempt_id,
+                    attempt_no=attempt.attempt_no,
+                    phase=attempt.phase,
+                    occurred_at=completed_at,
+                    state=changed_step.state.value,
+                    revision=changed_step.revision,
+                    error_class=outcome.error_class,
+                    summary=_outcome_summary(outcome, redacted_result),
+                )
+            )
+            if (
+                run.state is RunState.RUNNING
+                and next_state is StepState.SUCCEEDED
+                and all(
                 step.id == outcome.step_id
                 or uow.steps.get(outcome.run_id, step.id).state is StepState.SUCCEEDED
                 for step in definition.steps
+                )
             ):
                 succeeded_run, run_event = run.transition(
                     RunState.SUCCEEDED,
@@ -360,7 +564,7 @@ class Coordinator:
                 )
                 uow.runs.save(succeeded_run, expected_revision=run.revision)
                 uow.events.append(run_event)
-            elif next_state is StepState.FAILED:
+            elif run.state is RunState.RUNNING and next_state is StepState.FAILED:
                 failed_run, run_event = run.transition(
                     RunState.FAILED,
                     occurred_at=completed_at,
@@ -374,14 +578,16 @@ def _execute_request(request: _ExecutionRequest) -> ExecutionOutcome:
     context = request.context
     try:
         result = request.tool.execute(context, request.arguments)
-    except DomainError as exc:
-        return ExecutionOutcome(
-            run_id=context.run_id,
-            step_id=context.step_id,
-            attempt_no=context.attempt_number,
-            status="failed",
-            error_class=exc.error_class.value,
-            error_message=exc.message,
+    except Exception as exc:
+        error_class = _classify_tool_exception(exc)
+        return _failed_outcome(
+            request,
+            error_class=error_class,
+            safe_message=(
+                "tool result unknown"
+                if error_class is ErrorClass.RESULT_UNKNOWN
+                else "tool execution failed"
+            ),
         )
     return ExecutionOutcome(
         run_id=context.run_id,
@@ -389,6 +595,71 @@ def _execute_request(request: _ExecutionRequest) -> ExecutionOutcome:
         attempt_no=context.attempt_number,
         status="success",
         result=result.output,
+    )
+
+
+def _outcome_from_future(owned: _OwnedFuture) -> ExecutionOutcome:
+    try:
+        return owned.future.result()
+    except Exception as exc:
+        error_class = _classify_tool_exception(exc)
+        return _failed_outcome(
+            owned.request,
+            error_class=error_class,
+            safe_message=(
+                "tool result unknown"
+                if error_class is ErrorClass.RESULT_UNKNOWN
+                else "tool execution failed"
+            ),
+        )
+
+
+def _failed_outcome(
+    request: _ExecutionRequest,
+    *,
+    error_class: ErrorClass,
+    safe_message: str,
+) -> ExecutionOutcome:
+    context = request.context
+    return ExecutionOutcome(
+        run_id=context.run_id,
+        step_id=context.step_id,
+        attempt_no=context.attempt_number,
+        status="failed",
+        error_class=error_class.value,
+        error_message=safe_message,
+    )
+
+
+def _classify_tool_exception(exc: Exception) -> ErrorClass:
+    if isinstance(exc, DomainError):
+        return exc.error_class
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return ErrorClass.RESULT_UNKNOWN
+    return ErrorClass.PERMANENT
+
+
+def _consume_late_future(future: Future[ExecutionOutcome]) -> None:
+    try:
+        future.result()
+    except Exception:
+        return
+
+
+def _outcome_summary(outcome: ExecutionOutcome, redacted_result: object) -> object:
+    if outcome.status == "success":
+        return {"status": "success", "result": redacted_result}
+    return {"status": "failed", "error_class": outcome.error_class}
+
+
+def _completed_for_run(
+    outcomes: tuple[ExecutionOutcome, ...],
+    run_id: str,
+) -> tuple[str, ...]:
+    return tuple(
+        outcome.step_id
+        for outcome in outcomes
+        if outcome.run_id == run_id and outcome.status == "success"
     )
 
 
@@ -409,3 +680,5 @@ _TERMINAL_RUN_STATES = frozenset(
         RunState.MANUAL_INTERVENTION,
     }
 )
+
+_FORWARD_RUN_STATES = frozenset({RunState.PENDING, RunState.RUNNING})
