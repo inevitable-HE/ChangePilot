@@ -8,6 +8,7 @@ resume_draft.md
 
 # Temporary files
 tmp/
+.worktrees/
 
 # Python environments and caches
 .venv/
