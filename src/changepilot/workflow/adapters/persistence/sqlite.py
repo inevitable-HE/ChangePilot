@@ -286,6 +286,8 @@ class _Snapshot:
     new_approval_keys: set[tuple[str, str]] = field(default_factory=set)
     run_expected_revisions: dict[str, int] = field(default_factory=dict)
     step_expected_revisions: dict[tuple[str, str], int] = field(default_factory=dict)
+    saved_run_keys: set[str] = field(default_factory=set)
+    saved_step_keys: set[tuple[str, str]] = field(default_factory=set)
 
     @classmethod
     def from_connection(cls, connection: Connection) -> "_Snapshot":
@@ -386,9 +388,14 @@ class _SQLiteRunRepository(RunRepository[RunT]):
                 expected_revision=expected_new_revision,
                 actual_revision=run.revision,
             )
+        if run.run_id in self._snapshot.saved_run_keys:
+            raise PersistenceError(
+                f"multiple run saves in a single unit of work are not supported: {run.run_id}"
+            )
 
         self._snapshot.runs[run.run_id] = _clone(run)
         self._snapshot.dirty_run_keys.add(run.run_id)
+        self._snapshot.saved_run_keys.add(run.run_id)
         if run.run_id not in self._snapshot.new_run_keys:
             self._snapshot.run_expected_revisions.setdefault(run.run_id, expected_revision)
 
@@ -421,9 +428,15 @@ class _SQLiteStepRepository(StepRepository[StepT]):
                 expected_revision=expected_new_revision,
                 actual_revision=step.revision,
             )
+        if key in self._snapshot.saved_step_keys:
+            raise PersistenceError(
+                "multiple step saves in a single unit of work are not supported: "
+                f"{key[0]}:{key[1]}"
+            )
 
         self._snapshot.steps[key] = _clone(step)
         self._snapshot.dirty_step_keys.add(key)
+        self._snapshot.saved_step_keys.add(key)
         if key not in self._snapshot.new_step_keys:
             self._snapshot.step_expected_revisions.setdefault(key, expected_revision)
 
@@ -553,21 +566,20 @@ class SQLiteUnitOfWork:
         try:
             self._connection.exec_driver_sql("BEGIN IMMEDIATE")
             self._validate_uniqueness()
-            self._validate_revisions()
             published_events, published_sequences = self._allocate_published_events()
             self._publish(published_events, published_sequences)
             self._connection.commit()
         except (InvalidRevisionError, OptimisticLockError, UniquenessError):
-            if self._connection.in_transaction():
-                self._connection.rollback()
+            self.rollback()
             raise
         except IntegrityError as exc:
-            if self._connection.in_transaction():
-                self._connection.rollback()
+            self.rollback()
             raise self._translate_integrity_error(exc) from exc
+        except TypeError as exc:
+            self.rollback()
+            raise PersistenceError(str(exc)) from exc
         except SQLAlchemyError as exc:
-            if self._connection.in_transaction():
-                self._connection.rollback()
+            self.rollback()
             raise PersistenceError(str(exc)) from exc
 
         self._snapshot.mark_committed(published_events, published_sequences)
@@ -644,37 +656,24 @@ class SQLiteUnitOfWork:
                     identifier=f"{key[0]}:{key[1]}",
                 )
 
-    def _validate_revisions(self) -> None:
-        for run_id, expected_revision in self._snapshot.run_expected_revisions.items():
-            actual_revision = self._connection.execute(
-                select(workflow_runs.c.revision).where(workflow_runs.c.run_id == run_id)
-            ).scalar_one_or_none()
-            if actual_revision is None:
-                actual_revision = -1
-            if actual_revision != expected_revision:
-                raise OptimisticLockError(
-                    aggregate_type="run",
-                    identifier=run_id,
-                    expected_revision=expected_revision,
-                    actual_revision=actual_revision,
-                )
+    def _actual_run_revision(self, run_id: str) -> int:
+        actual_revision = self._connection.execute(
+            select(workflow_runs.c.revision).where(workflow_runs.c.run_id == run_id)
+        ).scalar_one_or_none()
+        if actual_revision is None:
+            return -1
+        return actual_revision
 
-        for key, expected_revision in self._snapshot.step_expected_revisions.items():
-            actual_revision = self._connection.execute(
-                select(step_runs.c.revision).where(
-                    step_runs.c.run_id == key[0],
-                    step_runs.c.step_id == key[1],
-                )
-            ).scalar_one_or_none()
-            if actual_revision is None:
-                actual_revision = -1
-            if actual_revision != expected_revision:
-                raise OptimisticLockError(
-                    aggregate_type="step",
-                    identifier=f"{key[0]}:{key[1]}",
-                    expected_revision=expected_revision,
-                    actual_revision=actual_revision,
-                )
+    def _actual_step_revision(self, key: tuple[str, str]) -> int:
+        actual_revision = self._connection.execute(
+            select(step_runs.c.revision).where(
+                step_runs.c.run_id == key[0],
+                step_runs.c.step_id == key[1],
+            )
+        ).scalar_one_or_none()
+        if actual_revision is None:
+            return -1
+        return actual_revision
 
     def _allocate_published_events(
         self,
@@ -736,9 +735,13 @@ class SQLiteUnitOfWork:
 
         for key in self._snapshot.dirty_run_keys - self._snapshot.new_run_keys:
             run = self._snapshot.runs[key]
-            self._connection.execute(
+            expected_revision = self._snapshot.run_expected_revisions[run.run_id]
+            result = self._connection.execute(
                 update(workflow_runs)
-                .where(workflow_runs.c.run_id == run.run_id)
+                .where(
+                    workflow_runs.c.run_id == run.run_id,
+                    workflow_runs.c.revision == expected_revision,
+                )
                 .values(
                     definition_id=run.definition_id,
                     definition_version=run.definition_version,
@@ -747,6 +750,13 @@ class SQLiteUnitOfWork:
                     revision=run.revision,
                 )
             )
+            if result.rowcount != 1:
+                raise OptimisticLockError(
+                    aggregate_type="run",
+                    identifier=run.run_id,
+                    expected_revision=expected_revision,
+                    actual_revision=self._actual_run_revision(run.run_id),
+                )
 
         for key in self._snapshot.new_step_keys:
             step = self._snapshot.steps[key]
@@ -761,14 +771,26 @@ class SQLiteUnitOfWork:
 
         for key in self._snapshot.dirty_step_keys - self._snapshot.new_step_keys:
             step = self._snapshot.steps[key]
-            self._connection.execute(
+            expected_revision = self._snapshot.step_expected_revisions[key]
+            result = self._connection.execute(
                 update(step_runs)
-                .where(step_runs.c.run_id == step.run_id, step_runs.c.step_id == step.step_id)
+                .where(
+                    step_runs.c.run_id == step.run_id,
+                    step_runs.c.step_id == step.step_id,
+                    step_runs.c.revision == expected_revision,
+                )
                 .values(
                     state=step.state.value,
                     revision=step.revision,
                 )
             )
+            if result.rowcount != 1:
+                raise OptimisticLockError(
+                    aggregate_type="step",
+                    identifier=f"{key[0]}:{key[1]}",
+                    expected_revision=expected_revision,
+                    actual_revision=self._actual_step_revision(key),
+                )
 
         for key in self._snapshot.new_attempt_keys:
             attempt = self._snapshot.attempts[key]

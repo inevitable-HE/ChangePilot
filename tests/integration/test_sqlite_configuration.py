@@ -9,6 +9,7 @@ from tests.contract.uow_contract import _load_module
 
 
 ROOT = Path(__file__).resolve().parents[2]
+MIGRATION_PATH = ROOT / "alembic" / "versions" / "0001_workflow_runtime.py"
 RUNTIME_TABLES = {
     "workflow_definitions",
     "workflow_runs",
@@ -35,6 +36,32 @@ def _fetch_tables(connection) -> set[str]:
         "SELECT name FROM sqlite_master WHERE type = 'table'"
     ).all()
     return {row[0] for row in rows}
+
+
+def _sqlite_object_sql(connection, *, object_type: str, name: str) -> str:
+    return connection.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
+        (object_type, name),
+    ).scalar_one()
+
+
+def _foreign_keys_by_id(connection, table_name: str) -> dict[int, list[tuple]]:
+    groups: dict[int, list[tuple]] = {}
+    for row in connection.exec_driver_sql(f"PRAGMA foreign_key_list('{table_name}')"):
+        groups.setdefault(row[0], []).append(row)
+    return groups
+
+
+def test_frozen_migration_uses_explicit_alembic_ddl() -> None:
+    source = MIGRATION_PATH.read_text(encoding="utf-8")
+
+    assert "schema import metadata" not in source
+    assert "metadata.create_all" not in source
+    assert "metadata.drop_all" not in source
+    assert source.count("op.create_table(") == len(RUNTIME_TABLES)
+    assert "op.create_index(" in source
+    assert "op.drop_index(" in source
+    assert source.count("op.drop_table(") == len(RUNTIME_TABLES)
 
 
 def test_create_sqlite_engine_enables_sqlite_pragmas(tmp_path: Path) -> None:
@@ -75,39 +102,40 @@ def test_alembic_upgrade_creates_runtime_schema_and_constraints(tmp_path: Path) 
         }
         assert workflow_run_columns["last_event_sequence"][3] == 1
         assert workflow_run_columns["revision"][3] == 1
+        assert connection.exec_driver_sql("PRAGMA foreign_key_list('workflow_runs')").all() == []
 
-        step_run_foreign_keys = connection.exec_driver_sql(
-            "PRAGMA foreign_key_list('step_runs')"
-        ).all()
-        assert any(
-            row[2] == "workflow_runs" and row[3] == "run_id" and row[4] == "run_id"
-            for row in step_run_foreign_keys
-        )
+        step_run_foreign_keys = _foreign_keys_by_id(connection, "step_runs")
+        assert list(step_run_foreign_keys) == [0]
+        assert step_run_foreign_keys[0] == [
+            (0, 0, "workflow_runs", "run_id", "run_id", "NO ACTION", "CASCADE", "NONE")
+        ]
 
-        attempt_foreign_keys = connection.exec_driver_sql(
-            "PRAGMA foreign_key_list('step_attempts')"
-        ).all()
-        assert any(
-            row[2] == "step_runs" and row[3] == "run_id" and row[4] == "run_id"
-            for row in attempt_foreign_keys
-        )
-        assert any(
-            row[2] == "step_runs" and row[3] == "step_id" and row[4] == "step_id"
-            for row in attempt_foreign_keys
-        )
+        attempt_foreign_keys = _foreign_keys_by_id(connection, "step_attempts")
+        assert list(attempt_foreign_keys) == [0]
+        assert attempt_foreign_keys[0] == [
+            (0, 0, "step_runs", "run_id", "run_id", "NO ACTION", "CASCADE", "NONE"),
+            (0, 1, "step_runs", "step_id", "step_id", "NO ACTION", "CASCADE", "NONE"),
+        ]
 
-        event_foreign_keys = connection.exec_driver_sql(
-            "PRAGMA foreign_key_list('audit_events')"
-        ).all()
-        assert any(
-            row[2] == "workflow_runs" and row[3] == "run_id" and row[4] == "run_id"
-            for row in event_foreign_keys
-        )
+        event_foreign_keys = _foreign_keys_by_id(connection, "audit_events")
+        assert list(event_foreign_keys) == [0, 1]
+        assert event_foreign_keys[0] == [
+            (0, 0, "step_runs", "run_id", "run_id", "NO ACTION", "CASCADE", "NONE"),
+            (0, 1, "step_runs", "step_id", "step_id", "NO ACTION", "CASCADE", "NONE"),
+        ]
+        assert event_foreign_keys[1] == [
+            (1, 0, "workflow_runs", "run_id", "run_id", "NO ACTION", "CASCADE", "NONE")
+        ]
 
-        approval_indexes = connection.exec_driver_sql(
-            "PRAGMA index_list('approval_requests')"
-        ).all()
-        assert any(row[2] for row in approval_indexes)
+        approval_index_sql = _sqlite_object_sql(
+            connection,
+            object_type="index",
+            name="ix_approval_requests_pending_unique",
+        )
+        assert approval_index_sql == (
+            "CREATE UNIQUE INDEX ix_approval_requests_pending_unique "
+            "ON approval_requests (run_id, approval_key) WHERE decision IS NULL"
+        )
 
     engine.dispose()
 
