@@ -371,7 +371,7 @@ git commit -m "feat: add deterministic workflow state machines"
 - Consumes: domain definitions, runs, steps, attempts, approvals, and events.
 - Produces: `UnitOfWork`, repository protocols, `MemoryUnitOfWork`, optimistic revision checks, monotonic event sequences, and rollback semantics used by all application services.
 
-- [ ] **Step 1: Write the failing reusable Unit of Work contract**
+- [x] **Step 1: Write the failing reusable Unit of Work contract**
 
 ```python
 # tests/contract/uow_contract.py
@@ -411,13 +411,13 @@ def test_memory_state_and_event_are_atomic() -> None:
     assert_state_and_event_are_atomic(lambda **kwargs: MemoryUnitOfWork(store, **kwargs))
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for the memory Unit of Work contract**
 
 Run: `python -m pytest tests/contract/test_memory_uow.py -q`
 
 Expected: FAIL because persistence ports and memory adapter do not exist.
 
-- [ ] **Step 3: Implement protocols and copy-on-write memory transactions**
+- [x] **Step 3: Implement protocols and copy-on-write memory transactions**
 
 ```python
 # src/changepilot/workflow/ports/persistence.py
@@ -440,13 +440,13 @@ class UnitOfWork(Protocol):
 
 `MemoryUnitOfWork` must clone committed dictionaries at entry and swap them into `MemoryStore` only after all staged validations and event appends succeed. Allocate event sequence from the transaction snapshot. `save(..., expected_revision)` raises `OptimisticLockError` if the committed revision differs.
 
-- [ ] **Step 4: Verify GREEN and repository contract tests**
+- [x] **Step 4: Verify GREEN and repository contract tests**
 
 Run: `python -m pytest tests/contract/test_memory_uow.py -q`
 
 Expected: PASS for commit, rollback, optimistic locking, approval uniqueness, attempt uniqueness, monotonic sequence, and state/event atomicity.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add src/changepilot/workflow/ports src/changepilot/workflow/adapters tests/contract
