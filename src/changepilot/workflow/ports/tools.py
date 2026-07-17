@@ -111,6 +111,26 @@ class ToolDescriptor(BoundaryModel):
             raise ValueError(f"{info.field_name} must be a non-empty string")
         return value
 
+    @field_validator("input_model", "output_model")
+    @classmethod
+    def _validate_boundary_model_type(
+        cls,
+        value: type[BaseModel],
+        info: ValidationInfo,
+    ) -> type[BaseModel]:
+        if not isinstance(value, type) or not issubclass(value, BaseModel):
+            raise ValueError(f"{info.field_name} must be a Pydantic model type")
+
+        config = value.model_config
+        if config.get("strict") is not True:
+            raise ValueError(f"{info.field_name} must declare model_config.strict=True")
+        if config.get("frozen") is not True:
+            raise ValueError(f"{info.field_name} must declare model_config.frozen=True")
+        if config.get("extra") != "forbid":
+            raise ValueError(f"{info.field_name} must declare model_config.extra='forbid'")
+
+        return value
+
     @field_validator("default_timeout_seconds", "max_timeout_seconds")
     @classmethod
     def _validate_timeout(cls, value: int, info: ValidationInfo) -> int:

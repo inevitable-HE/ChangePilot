@@ -49,6 +49,24 @@ class ProbeOutput(BaseModel):
     deployment_id: str | None = None
 
 
+class NonStrictArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    timeout_seconds: int
+
+
+class MutableArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    timeout_seconds: int
+
+
+class PermissiveOutput(BaseModel):
+    model_config = ConfigDict(extra="allow", frozen=True, strict=True)
+
+    deployment_id: str
+
+
 def make_descriptor():
     ports = load_ports_module()
     return ports.ToolDescriptor(
@@ -90,6 +108,45 @@ def test_descriptor_validates_boundary_types_and_is_immutable() -> None:
     ports = load_ports_module()
 
     descriptor = make_descriptor()
+
+    with pytest.raises(ValidationError):
+        ports.ToolDescriptor(
+            name="deploy_service",
+            version="1.2.3",
+            input_model=NonStrictArguments,
+            output_model=DeployOutput,
+            risk=ports.ToolRisk.HIGH,
+            idempotency=ports.ToolIdempotency.SUPPORTED,
+            default_timeout_seconds=30,
+            max_timeout_seconds=120,
+            sensitive_argument_paths=("credentials.token",),
+        )
+
+    with pytest.raises(ValidationError):
+        ports.ToolDescriptor(
+            name="deploy_service",
+            version="1.2.3",
+            input_model=MutableArguments,
+            output_model=DeployOutput,
+            risk=ports.ToolRisk.HIGH,
+            idempotency=ports.ToolIdempotency.SUPPORTED,
+            default_timeout_seconds=30,
+            max_timeout_seconds=120,
+            sensitive_argument_paths=("credentials.token",),
+        )
+
+    with pytest.raises(ValidationError):
+        ports.ToolDescriptor(
+            name="deploy_service",
+            version="1.2.3",
+            input_model=DeployArguments,
+            output_model=PermissiveOutput,
+            risk=ports.ToolRisk.HIGH,
+            idempotency=ports.ToolIdempotency.SUPPORTED,
+            default_timeout_seconds=30,
+            max_timeout_seconds=120,
+            sensitive_argument_paths=("credentials.token",),
+        )
 
     with pytest.raises(ValidationError):
         ports.ToolDescriptor(
@@ -203,6 +260,16 @@ def test_registry_rejects_descriptor_mismatch_invalid_arguments_and_invalid_outp
         registry.register(DeployTool(descriptor), descriptor=mismatched)
 
     registry.register(DeployTool(descriptor), descriptor=descriptor)
+
+    validated_arguments = registry.coerce_arguments(
+        "deploy_service",
+        "1.2.3",
+        {"target": "prod", "timeout_seconds": 30},
+    )
+    assert validated_arguments == DeployArguments(target="prod", timeout_seconds=30)
+
+    with pytest.raises(ValidationError):
+        validated_arguments.timeout_seconds = 99
 
     with pytest.raises(ValueError):
         registry.validate_arguments(

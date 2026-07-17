@@ -96,6 +96,39 @@ def test_redact_handles_nested_structures_and_declared_paths_without_mutation() 
     assert redacted["attempts"][2][1]["password"] == tooling.REDACTED
 
 
+def test_redact_does_not_serialize_raw_exception_args_by_default() -> None:
+    tooling = load_tooling_module()
+
+    serialized = json.dumps(
+        tooling.redact(RuntimeError("AWS_SECRET_ACCESS_KEY", "super-secret-value")),
+        sort_keys=True,
+        default=str,
+    )
+
+    assert "AWS_SECRET_ACCESS_KEY" not in serialized
+    assert "super-secret-value" not in serialized
+    assert tooling.REDACTED in serialized
+
+
+def test_redact_supports_structured_exception_arg_paths() -> None:
+    tooling = load_tooling_module()
+
+    redacted = tooling.redact(
+        {
+            "error": RuntimeError(
+                "deploy failed",
+                {"safe": "visible-before-redaction", "secret": "super-secret-value"},
+            )
+        },
+        sensitive_paths=("error.args.1.safe",),
+    )
+
+    assert redacted["error"]["type"] == "RuntimeError"
+    assert redacted["error"]["args"][0] == tooling.REDACTED
+    assert redacted["error"]["args"][1]["safe"] == tooling.REDACTED
+    assert redacted["error"]["args"][1]["secret"] == tooling.REDACTED
+
+
 def test_redact_fails_closed_for_secret_refs_inside_models_and_exceptions() -> None:
     tooling = load_tooling_module()
 

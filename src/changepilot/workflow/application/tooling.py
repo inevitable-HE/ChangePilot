@@ -197,7 +197,7 @@ def _redact_value(
         return {
             "type": value.__class__.__name__,
             "args": [
-                _redact_value(
+                _redact_exception_argument(
                     argument,
                     path=path + ("args", str(index)),
                     sensitive_paths=sensitive_paths,
@@ -242,6 +242,17 @@ def _redact_value(
 
 def _is_sensitive_segment(segment: str) -> bool:
     return segment.casefold() in _COMMON_SENSITIVE_KEYS
+
+
+def _redact_exception_argument(
+    value: object,
+    *,
+    path: tuple[str, ...],
+    sensitive_paths: set[tuple[str, ...]],
+) -> object:
+    if isinstance(value, (str, bytes, bytearray)):
+        return REDACTED
+    return _redact_value(value, path=path, sensitive_paths=sensitive_paths)
 
 
 def _require_identity(value: str, *, field_name: str) -> str:
