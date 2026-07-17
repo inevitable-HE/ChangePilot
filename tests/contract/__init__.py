@@ -1,0 +1,1 @@
+"""Reusable persistence contract tests."""
