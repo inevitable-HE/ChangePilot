@@ -468,7 +468,7 @@ git commit -m "feat: add transactional persistence ports"
 - Consumes: `UnitOfWork` and repository behavior from Task 3.
 - Produces: `create_sqlite_engine(path)`, `SQLiteUnitOfWork`, and a migration containing definitions, runs, steps, attempts, approvals, and events.
 
-- [ ] **Step 1: Write failing SQLite contract and connection tests**
+- [x] **Step 1: Write failing SQLite contract and connection tests**
 
 ```python
 # tests/integration/test_sqlite_configuration.py
@@ -487,13 +487,13 @@ def test_sqlite_enables_required_pragmas(tmp_path) -> None:
 
 `tests/contract/test_sqlite_uow.py` must invoke every function from `uow_contract.py` against a migrated temporary database.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for SQLite contracts and connection configuration**
 
 Run: `python -m pytest tests/contract/test_sqlite_uow.py tests/integration/test_sqlite_configuration.py -q`
 
 Expected: FAIL because the SQLite adapter and migration do not exist.
 
-- [ ] **Step 3: Implement SQLAlchemy Core tables, migration, engine events, and transactional repositories**
+- [x] **Step 3: Implement SQLAlchemy Core tables, migration, engine events, and transactional repositories**
 
 ```python
 # src/changepilot/workflow/adapters/persistence/sqlite.py
@@ -520,7 +520,7 @@ def create_sqlite_engine(path: Path) -> Engine:
 
 Use SQLAlchemy Core tables with unique constraints for `(run_id, step_id)`, `(run_id, step_id, attempt_no, phase)`, `(run_id, sequence)`, and one effective pending approval per run. `SQLiteUnitOfWork` owns one connection and transaction; event append failure must roll back preceding state writes.
 
-- [ ] **Step 4: Apply migration and verify GREEN**
+- [x] **Step 4: Apply migration and verify GREEN**
 
 Run: `python -m alembic upgrade head`
 
@@ -528,7 +528,7 @@ Run: `python -m pytest tests/contract/test_sqlite_uow.py tests/integration/test_
 
 Expected: PASS with the same repository behavior as memory and all three PRAGMAs enabled.
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```bash
 git add alembic.ini alembic src/changepilot/workflow/adapters/persistence tests/contract/test_sqlite_uow.py tests/integration/test_sqlite_configuration.py
