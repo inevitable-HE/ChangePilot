@@ -119,7 +119,7 @@ tests/
 - Produces: `WorkflowDefinition.from_mapping(payload, registry)`, `WorkflowDefinition.digest`, `StepDefinition`, `RetryPolicy`, `DefinitionValidationError`, and the read-only `ToolCatalog` protocol.
 - Consumes: no project interfaces.
 
-- [ ] **Step 1: Create the Python test baseline and write failing definition tests**
+- [x] **Step 1: Create the Python test baseline and write failing definition tests**
 
 ```toml
 # pyproject.toml
@@ -178,7 +178,7 @@ def test_equivalent_payloads_have_the_same_digest() -> None:
     assert WorkflowDefinition.from_mapping(first, Catalog()).digest == WorkflowDefinition.from_mapping(second, Catalog()).digest
 ```
 
-- [ ] **Step 2: Install the editable project and verify RED**
+- [x] **Step 2: Install the editable project and verify RED**
 
 Run: `C:\Users\kevinyuan\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv`
 
@@ -190,7 +190,7 @@ Run: `.venv\Scripts\python.exe -m pytest tests/unit/test_definition_validation.p
 
 Expected: FAIL during import because `changepilot.workflow.domain.definitions` does not exist.
 
-- [ ] **Step 3: Implement immutable definitions, canonical digest, limits, tool checks, and Kahn cycle validation**
+- [x] **Step 3: Implement immutable definitions, canonical digest, limits, tool checks, and Kahn cycle validation**
 
 ```python
 # src/changepilot/workflow/domain/definitions.py
@@ -252,13 +252,13 @@ class WorkflowDefinition:
 
 Implement `validate_definition_payload()` in `validation.py` so it rejects duplicate IDs, missing dependencies, unregistered tool versions, invalid arguments, more than 100 steps, more than 1000 edges, retry counts outside `1..10`, and any cycle. It must return a newly allocated canonical dictionary with explicit defaults and steps sorted by ID.
 
-- [ ] **Step 4: Verify GREEN and full unit baseline**
+- [x] **Step 4: Verify GREEN and full unit baseline**
 
 Run: `python -m pytest tests/unit/test_definition_validation.py -q`
 
 Expected: PASS, including cycle rejection and stable digest.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add pyproject.toml src/changepilot tests/unit/test_definition_validation.py
