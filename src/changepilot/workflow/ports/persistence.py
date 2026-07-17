@@ -6,7 +6,7 @@ from typing import Generic, Protocol, TypeVar
 
 DefinitionT = TypeVar("DefinitionT")
 RunT = TypeVar("RunT", bound="HasRevision")
-StepT = TypeVar("StepT", bound="HasRevision")
+StepT = TypeVar("StepT", bound="StepRecord")
 AttemptT = TypeVar("AttemptT", bound="AttemptRecord")
 ApprovalT = TypeVar("ApprovalT", bound="ApprovalRecord")
 EventT = TypeVar("EventT", bound="RunScopedRecord")
@@ -22,6 +22,10 @@ class HasRevision(RunScopedRecord, Protocol):
 
 class StepScopedRecord(RunScopedRecord, Protocol):
     step_id: str
+
+
+class StepRecord(HasRevision, StepScopedRecord, Protocol):
+    """Step aggregate with explicit run/step identity and optimistic revision."""
 
 
 class DefinitionRecord(Protocol):
@@ -74,6 +78,29 @@ class UniquenessError(PersistenceError):
         self.identifier = identifier
 
 
+class InvalidRevisionError(PersistenceError):
+    def __init__(
+        self,
+        *,
+        aggregate_type: str,
+        identifier: str,
+        expected_revision: int,
+        actual_revision: int,
+    ) -> None:
+        super().__init__(
+            f"{aggregate_type} save rejected for {identifier}: "
+            f"expected new revision {expected_revision}, found {actual_revision}"
+        )
+        self.aggregate_type = aggregate_type
+        self.identifier = identifier
+        self.expected_revision = expected_revision
+        self.actual_revision = actual_revision
+
+
+class UnitOfWorkStateError(PersistenceError):
+    """Raised when a unit of work is used after commit or rollback."""
+
+
 class DefinitionRepository(Protocol[DefinitionT]):
     def add(self, definition: DefinitionT) -> None:
         """Stage a new workflow definition."""
@@ -122,7 +149,7 @@ class ApprovalRepository(Protocol[ApprovalT]):
 
 class EventRepository(Protocol[EventT]):
     def append(self, event: EventT) -> SequencedEvent[EventT]:
-        """Stage an event and allocate its run-local sequence."""
+        """Stage an event in run-local order; the committed sequence is finalized at commit."""
 
     def list(
         self,
