@@ -4,29 +4,29 @@ design-doc: docs/superpowers/specs/2026-07-16-reliable-workflow-core-design.md
 base-ref: 64eaa1c323836383d78de1310881a446083957d0
 ---
 
-# ChangePilot Reliable Workflow Core Implementation Plan
+# ChangePilot 可靠工作流内核实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供 Agent 实施者使用：** 必须加载 `subagent-driven-development`（推荐）或 `executing-plans`，逐任务执行本计划。所有步骤使用 checkbox（`- [ ]`）跟踪。
 
-**Goal:** Build the deterministic, durable workflow execution core that validates static DAGs, coordinates registered tools, pauses for approval, survives process interruption, retries safely, compensates completed side effects, and exposes a redacted audit timeline.
+**目标：** 构建确定、持久的工作流执行内核，完成静态 DAG 校验、注册工具调度、人工审批暂停、进程中断恢复、安全重试、已完成副作用补偿和脱敏审计时间线查询。
 
-**Architecture:** Keep immutable workflow definitions and pure state machines in `domain`, orchestration in `application`, stable interfaces in `ports`, and memory/SQLite/Fake Tool implementations in `adapters`. The coordinator is the only database writer; tool workers return immutable outcomes. Every durable state transition and its audit event share one Unit of Work, while external tool calls occur between a start transaction and a result transaction.
+**架构：** `domain` 保存不可变工作流定义与纯状态机，`application` 负责协调，`ports` 定义稳定接口，`adapters` 提供内存、SQLite 和 Fake Tool 实现。协调器是唯一数据库写入者，工具 Worker 只返回不可变执行结果。每次持久状态转换与审计事件共用一个 Unit of Work，外部工具调用位于开始事务和结果事务之间。
 
-**Tech Stack:** Python 3.12, Pydantic v2, SQLAlchemy 2.0 Core, Alembic, pytest, pytest-cov, Hypothesis.
+**技术栈：** Python 3.12、Pydantic v2、SQLAlchemy 2.0 Core、Alembic、pytest、pytest-cov、Hypothesis。
 
-## Global Constraints
+## 全局约束
 
-- OpenSpec under `openspec/changes/establish-reliable-workflow-core/` is the canonical behavioral specification.
-- V1 accepts static DAGs only: no conditional routing, dynamic steps, loops, LLM calls, RAG, Web UI, Docker, PostgreSQL, distributed workers, multi-tenancy, or production connections.
-- A workflow contains at most 100 steps and 1000 dependency edges.
-- Tool concurrency defaults to 4 and must reject values above 16.
-- Retry policy defaults to 3 attempts and must reject values above 10.
-- SQLite runs with foreign keys, WAL, and a 5-second busy timeout under a single coordinator.
-- Secrets are represented by `SecretRef`; persisted arguments, results, errors, events, and approval snapshots must be redacted.
-- External side effects use at-least-once scheduling plus stable logical idempotency keys; the project must not claim exactly-once behavior.
-- Core tests must run without DeepSeek, network access, Docker, PostgreSQL, or real service/database connections on Windows and WSL2.
+- `openspec/changes/establish-reliable-workflow-core/` 下的 OpenSpec 是行为规范的唯一事实源。
+- V1 只接受静态 DAG，不实现条件路由、动态步骤、循环、LLM 调用、RAG、Web UI、Docker、PostgreSQL、分布式 Worker、多租户或生产连接。
+- 单个工作流最多包含 100 个步骤和 1000 条依赖边。
+- 工具并发默认值为 4，必须拒绝超过 16 的配置。
+- 重试策略默认最多尝试 3 次，必须拒绝超过 10 的配置。
+- SQLite 在单协调器模式下启用外键、WAL 和 5 秒 busy timeout。
+- 密钥使用 `SecretRef` 表示；持久化参数、结果、错误、事件和审批快照必须脱敏。
+- 外部副作用采用至少一次调度和稳定逻辑幂等键，不得宣称 exactly-once。
+- 核心测试必须能在 Windows 与 WSL2 上脱离 DeepSeek、网络、Docker、PostgreSQL 和真实服务或数据库连接运行。
 
-## Planned File Structure
+## 计划文件结构
 
 ```text
 pyproject.toml
@@ -77,9 +77,9 @@ tests/
 `-- support/
 ```
 
-## OpenSpec Coverage
+## OpenSpec 覆盖关系
 
-| OpenSpec task | Plan task |
+| OpenSpec 任务 | 计划任务 |
 | --- | --- |
 | 1.1 project baseline | 1 |
 | 1.2 domain models | 1, 2 |
@@ -101,7 +101,7 @@ tests/
 
 ---
 
-### Task 1: Project Baseline and Immutable Workflow Definitions
+### 任务 1：项目基线与不可变工作流定义
 
 **Files:**
 - Create: `pyproject.toml`
@@ -260,7 +260,7 @@ git add pyproject.toml src/changepilot tests/unit/test_definition_validation.py
 git commit -m "feat: validate immutable workflow definitions"
 ```
 
-### Task 2: Explicit Run and Step State Machines
+### 任务 2：显式运行与步骤状态机
 
 **Files:**
 - Create: `src/changepilot/workflow/domain/states.py`
@@ -350,7 +350,7 @@ git add src/changepilot/workflow/domain tests/unit/test_state_machines.py
 git commit -m "feat: add deterministic workflow state machines"
 ```
 
-### Task 3: Persistence Ports, Memory Unit of Work, and Atomic Events
+### 任务 3：持久化端口、内存 Unit of Work 与事件原子性
 
 **Files:**
 - Create: `src/changepilot/workflow/ports/persistence.py`
@@ -448,7 +448,7 @@ git add src/changepilot/workflow/ports src/changepilot/workflow/adapters tests/c
 git commit -m "feat: add transactional persistence ports"
 ```
 
-### Task 4: SQLite Schema, Alembic Migration, and Contract Adapter
+### 任务 4：SQLite Schema、Alembic 迁移与契约适配器
 
 **Files:**
 - Create: `alembic.ini`
@@ -530,7 +530,7 @@ git add alembic.ini alembic src/changepilot/workflow/adapters/persistence tests/
 git commit -m "feat: persist workflow runtime in sqlite"
 ```
 
-### Task 5: Tool Registry, Boundary Schemas, Redaction, and Idempotency Keys
+### 任务 5：工具注册、边界 Schema、脱敏与幂等键
 
 **Files:**
 - Modify: `src/changepilot/workflow/ports/tools.py`
@@ -628,7 +628,7 @@ git add src/changepilot/workflow/ports/tools.py src/changepilot/workflow/applica
 git commit -m "feat: add safe versioned tool contracts"
 ```
 
-### Task 6: Deterministic Scheduler, Attempts, Retry Policy, and Coordinator
+### 任务 6：确定性调度器、执行尝试、重试策略与协调器
 
 **Files:**
 - Create: `src/changepilot/workflow/application/scheduler.py`
@@ -712,7 +712,7 @@ git add src/changepilot/workflow/application tests/unit/test_scheduler.py tests/
 git commit -m "feat: coordinate deterministic workflow execution"
 ```
 
-### Task 7: Durable Global Approval Barrier
+### 任务 7：持久化全局审批屏障
 
 **Files:**
 - Create: `src/changepilot/workflow/application/approvals.py`
@@ -775,7 +775,7 @@ git add src/changepilot/workflow/application/approvals.py src/changepilot/workfl
 git commit -m "feat: enforce durable approval barriers"
 ```
 
-### Task 8: Crash Recovery, Probe Semantics, and Unknown Results
+### 任务 8：崩溃恢复、探测语义与未知结果
 
 **Files:**
 - Create: `src/changepilot/workflow/application/recovery.py`
@@ -847,7 +847,7 @@ git add src/changepilot/workflow/application/recovery.py tests/integration/test_
 git commit -m "feat: recover interrupted workflow attempts"
 ```
 
-### Task 9: Reverse-Dependency Compensation and Failure Preservation
+### 任务 9：逆依赖补偿与失败信息保留
 
 **Files:**
 - Modify: `src/changepilot/workflow/application/scheduler.py`
@@ -921,7 +921,7 @@ git add src/changepilot/workflow/application/scheduler.py src/changepilot/workfl
 git commit -m "feat: compensate completed workflow effects"
 ```
 
-### Task 10: Application Services, Order Upgrade Acceptance Scenario, and Documentation
+### 任务 10：应用服务、订单升级验收场景与文档
 
 **Files:**
 - Create: `src/changepilot/workflow/application/services.py`
@@ -1026,7 +1026,7 @@ git add src/changepilot/workflow/application/services.py tests/support/order_upg
 git commit -m "feat: complete reliable workflow core acceptance"
 ```
 
-## Final Build Gate
+## 最终构建门禁
 
 - [ ] Run `python -m pytest -q` and confirm zero failures.
 - [ ] Run `python -m pytest --cov=changepilot.workflow --cov-report=term-missing --cov-fail-under=85 -q` and confirm the threshold passes.
