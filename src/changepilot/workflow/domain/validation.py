@@ -73,6 +73,21 @@ def require_positive_int(
     return value
 
 
+def require_number(
+    value: object,
+    *,
+    field: str,
+    step_id: str | None = None,
+) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise DefinitionValidationError(
+            f"{field} must be numeric",
+            step_id=step_id,
+            field=field,
+        )
+    return value
+
+
 def require_string_sequence(
     value: object,
     *,

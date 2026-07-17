@@ -254,6 +254,20 @@ def test_from_mapping_rejects_scale_limits_and_retry_boundaries() -> None:
     }
     assert_validation_error(too_many_attempts, "max_attempts")
 
+    bool_attempts = base_payload()
+    bool_attempts["steps"][0] = {
+        **bool_attempts["steps"][0],
+        "retry": {"max_attempts": True},
+    }
+    assert_validation_error(bool_attempts, "max_attempts")
+
+    bool_backoff = base_payload()
+    bool_backoff["steps"][0] = {
+        **bool_backoff["steps"][0],
+        "retry": {"initial_backoff_seconds": True},
+    }
+    assert_validation_error(bool_backoff, "initial_backoff_seconds")
+
     string_version = base_payload()
     string_version["version"] = "7"
     assert_validation_error(string_version, "version")

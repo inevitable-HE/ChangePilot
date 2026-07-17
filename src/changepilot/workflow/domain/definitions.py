@@ -10,6 +10,7 @@ from changepilot.workflow.domain.validation import (
     DefinitionValidationError,
     find_cycle,
     require_mapping,
+    require_number,
     require_positive_int,
     require_string,
     require_string_sequence,
@@ -229,20 +230,16 @@ def _parse_retry_policy(raw_value: object, *, step_id: str) -> RetryPolicy:
     if raw_value is None:
         return RetryPolicy()
     mapping = require_mapping(raw_value, field="retry", step_id=step_id)
-    max_attempts = mapping.get("max_attempts", 3)
-    initial_backoff_seconds = mapping.get("initial_backoff_seconds", 1.0)
-    if not isinstance(max_attempts, int):
-        raise DefinitionValidationError(
-            "max_attempts must be an integer",
-            step_id=step_id,
-            field="retry.max_attempts",
-        )
-    if not isinstance(initial_backoff_seconds, (int, float)):
-        raise DefinitionValidationError(
-            "initial_backoff_seconds must be numeric",
-            step_id=step_id,
-            field="retry.initial_backoff_seconds",
-        )
+    max_attempts = require_positive_int(
+        mapping.get("max_attempts", 3),
+        field="retry.max_attempts",
+        step_id=step_id,
+    )
+    initial_backoff_seconds = require_number(
+        mapping.get("initial_backoff_seconds", 1.0),
+        field="retry.initial_backoff_seconds",
+        step_id=step_id,
+    )
     try:
         return RetryPolicy(
             max_attempts=max_attempts,
