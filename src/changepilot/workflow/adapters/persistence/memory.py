@@ -13,6 +13,7 @@ from changepilot.workflow.ports.persistence import (
     HasRevision,
     InvalidRevisionError,
     OptimisticLockError,
+    PersistenceError,
     RunRepository,
     RunScopedRecord,
     SequencedEvent,
@@ -83,6 +84,7 @@ class _Snapshot:
     new_step_keys: set[tuple[str, str]] = field(default_factory=set)
     dirty_step_keys: set[tuple[str, str]] = field(default_factory=set)
     new_attempt_keys: set[tuple[str, str, int, str]] = field(default_factory=set)
+    dirty_attempt_keys: set[tuple[str, str, int, str]] = field(default_factory=set)
     new_approval_keys: set[tuple[str, str]] = field(default_factory=set)
     run_expected_revisions: dict[str, int] = field(default_factory=dict)
     step_expected_revisions: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -255,6 +257,16 @@ class _MemoryAttemptRepository(Generic[AttemptT]):
         self._snapshot.attempts[key] = _clone(attempt)
         self._snapshot.new_attempt_keys.add(key)
 
+    def save(self, attempt: AttemptT) -> None:
+        self._ensure_writable()
+        key = _attempt_key(attempt)
+        if key not in self._snapshot.attempts:
+            raise PersistenceError(
+                f"cannot save missing attempt: {key[0]}:{key[1]}:{key[2]}:{key[3]}"
+            )
+        self._snapshot.attempts[key] = _clone(attempt)
+        self._snapshot.dirty_attempt_keys.add(key)
+
     def list(self, run_id: str, *, step_id: str | None = None) -> tuple[AttemptT, ...]:
         attempts = [
             _clone(attempt)
@@ -386,7 +398,8 @@ class MemoryUnitOfWork:
             for key in self._snapshot.new_step_keys | self._snapshot.dirty_step_keys
         }
         attempt_updates = {
-            key: _clone(self._snapshot.attempts[key]) for key in self._snapshot.new_attempt_keys
+            key: _clone(self._snapshot.attempts[key])
+            for key in self._snapshot.new_attempt_keys | self._snapshot.dirty_attempt_keys
         }
         approval_updates = {
             key: _clone(self._snapshot.approvals[key])

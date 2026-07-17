@@ -135,6 +135,9 @@ class AttemptRepository(Protocol[AttemptT]):
     def add(self, attempt: AttemptT) -> None:
         """Stage a step attempt."""
 
+    def save(self, attempt: AttemptT) -> None:
+        """Stage an update to an existing step attempt."""
+
     def list(self, run_id: str, *, step_id: str | None = None) -> tuple[AttemptT, ...]:
         """List attempts visible inside this unit of work."""
 

@@ -701,6 +701,37 @@ class UnitOfWorkContract:
 
         assert reloaded_attempt.payload["labels"] == ["before"]
 
+    def test_attempt_save_persists_completion_in_a_later_transaction(
+        self,
+        adapter_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+        running_attempt = AttemptRecord(
+            run_id="run-1",
+            step_id="inspect",
+            attempt_no=1,
+            phase="forward",
+            payload={"status": "running"},
+        )
+        completed_attempt = replace(
+            running_attempt,
+            payload={"status": "succeeded"},
+        )
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.attempts.add(running_attempt)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.attempts.save(completed_attempt)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            assert uow.attempts.list("run-1", step_id="inspect") == (
+                completed_attempt,
+            )
+
     def test_duplicate_attempt_key_is_rejected_within_single_uow(
         self,
         adapter_modules,
