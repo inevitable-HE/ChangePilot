@@ -247,6 +247,11 @@ class _MemoryAttemptRepository(Generic[AttemptT]):
     def add(self, attempt: AttemptT) -> None:
         self._ensure_writable()
         key = _attempt_key(attempt)
+        if key in self._snapshot.new_attempt_keys:
+            raise UniquenessError(
+                record_type="attempt",
+                identifier=f"{key[0]}:{key[1]}:{key[2]}:{key[3]}",
+            )
         self._snapshot.attempts[key] = _clone(attempt)
         self._snapshot.new_attempt_keys.add(key)
 
@@ -272,6 +277,11 @@ class _MemoryApprovalRepository(Generic[ApprovalT]):
     def add(self, approval: ApprovalT) -> None:
         self._ensure_writable()
         key = _approval_key(approval)
+        if key in self._snapshot.new_approval_keys:
+            raise UniquenessError(
+                record_type="approval",
+                identifier=f"{key[0]}:{key[1]}",
+            )
         self._snapshot.approvals[key] = _clone(approval)
         self._snapshot.new_approval_keys.add(key)
 

@@ -700,3 +700,75 @@ class UnitOfWorkContract:
             reloaded_attempt = uow.attempts.list("run-1", step_id="inspect")[0]
 
         assert reloaded_attempt.payload["labels"] == ["before"]
+
+    def test_duplicate_attempt_key_is_rejected_within_single_uow(
+        self,
+        adapter_modules,
+        persistence_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+        first_attempt = AttemptRecord(
+            run_id="run-1",
+            step_id="inspect",
+            attempt_no=1,
+            phase="forward",
+            payload={"labels": ["first"]},
+        )
+        duplicate_attempt = AttemptRecord(
+            run_id="run-1",
+            step_id="inspect",
+            attempt_no=1,
+            phase="forward",
+            payload={"labels": ["second"]},
+        )
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.attempts.add(first_attempt)
+
+            with pytest.raises(persistence_modules["ports"].UniquenessError) as exc_info:
+                uow.attempts.add(duplicate_attempt)
+
+            assert exc_info.value.record_type == "attempt"
+            assert exc_info.value.identifier == "run-1:inspect:1:forward"
+            assert uow.attempts.list("run-1", step_id="inspect") == (first_attempt,)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            persisted_attempts = uow.attempts.list("run-1", step_id="inspect")
+
+        assert persisted_attempts == (first_attempt,)
+
+    def test_duplicate_approval_key_is_rejected_within_single_uow(
+        self,
+        adapter_modules,
+        persistence_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+        first_approval = ApprovalRecord(
+            run_id="run-1",
+            approval_key="approval-1",
+            payload={"reviewers": ["ops"]},
+        )
+        duplicate_approval = ApprovalRecord(
+            run_id="run-1",
+            approval_key="approval-1",
+            payload={"reviewers": ["legal"]},
+        )
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.approvals.add(first_approval)
+
+            with pytest.raises(persistence_modules["ports"].UniquenessError) as exc_info:
+                uow.approvals.add(duplicate_approval)
+
+            assert exc_info.value.record_type == "approval"
+            assert exc_info.value.identifier == "run-1:approval-1"
+            assert uow.approvals.list("run-1") == (first_approval,)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            persisted_approvals = uow.approvals.list("run-1")
+
+        assert persisted_approvals == (first_approval,)
