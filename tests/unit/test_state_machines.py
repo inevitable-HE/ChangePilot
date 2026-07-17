@@ -47,6 +47,7 @@ WORKFLOW_ALLOWED = {
     "pending": frozenset({"running", "cancelled"}),
     "running": frozenset(
         {
+            "cancelled",
             "waiting_approval",
             "succeeded",
             "failed",

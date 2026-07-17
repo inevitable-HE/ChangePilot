@@ -11,6 +11,7 @@ RUN_TRANSITIONS: dict[RunState, frozenset[RunState]] = {
     RunState.PENDING: frozenset({RunState.RUNNING, RunState.CANCELLED}),
     RunState.RUNNING: frozenset(
         {
+            RunState.CANCELLED,
             RunState.WAITING_APPROVAL,
             RunState.SUCCEEDED,
             RunState.FAILED,
