@@ -3,20 +3,19 @@
 - Change: `establish-reliable-workflow-core`
 - Review mode: `standard`
 - TDD mode: `tdd`
-- Current plan task: `Task 6：确定性调度器、执行尝试、重试策略与协调器`
-- Mapped OpenSpec tasks: `3.1`, `3.4`
-- Stage: `done`
-- Implementer: `019f7085-0f70-7f30-874f-15dbf1f770c4` (`Dirac`, completed)
-- Implementation commits: `de6d3cf` (`feat-coordinate-deterministic-workflow-execution`), `82b8181` (`fix-harden-coordinator-concurrency-and-audit`), `02ec4f1` (`fix-close-coordinator-lifecycle-gaps`)
-- Changed files: 10 scheduler/coordinator/persistence contract/adapter/test files
-- RED evidence: missing scheduler/coordinator modules; missing attempt save contract; targeted behavior failures for invalid concurrency, terminalization, backoff, permanent/result-unknown classification, stuck detection, SQLite serialization, and identifier use
-- GREEN evidence: initial targeted -> `17 passed`; initial full -> `239 passed`; first review-fix scheduler/coordinator -> `31 passed`; persistence contracts -> `46 passed`; first review-fix full -> `255 passed`; exceptional fix scheduler/coordinator -> `35 passed`; coordinator independent target+contracts -> `81 passed`; exceptional fix full -> `259 passed`; coordinator full -> `259 passed`; `git diff --check` clean except line-ending warnings
+- Current plan task: `Task 7：持久化全局审批屏障`
+- Mapped OpenSpec tasks: `4.1`
+- Stage: `blocked`
+- Implementer: `019f741b-4669-78a3-840a-5d6b84a14e38` (`Volta`, completed)
+- Implementation commits: `5d1fb2f` (`feat-enforce-durable-approval-barriers`), `1e2a5c3` (`fix-harden-approval-persistence-and-recovery-boundaries`), `64d5416` (`fix-preserve-legacy-approvals-and-unknown-outcomes`)
+- Changed files: 14 approval/coordinator/domain/persistence/schema/migration/test files
+- RED evidence: missing approval module/service; Memory/SQLite missing approval get/pending/save and uniqueness; sensitive decision reason leaked; existing state/index expectations exposed after contract change
+- GREEN evidence: initial approval target -> `22 passed`; initial full -> `289 passed`; review-fix approval target -> `53 passed`; migration/persistence/coordinator affected -> `249 passed`; coordinator independent affected -> `306 passed`; review-fix full -> `323 passed`; exceptional fix affected -> `152 passed`; independent exceptional-fix affected -> `152 passed`; final independent full rerun -> `331 passed`; `git diff --check` clean except line-ending warnings
 - Risk review required: yes
-- Risk signals: concurrency, shared in-flight state, cross-layer orchestration, expected implementation over 200 lines
-- Task reviewer: `019f70a6-1740-7172-b3ed-d37f6d44caba` (`Maxwell`, completed with changes requested)
-- Fix agent: `019f70cc-e8bc-73a1-a136-a1399cd6534f` (`Anscombe`, completed)
-- Exceptional fix agent: `019f70f2-8808-77e2-a6cf-e663dc156b4f` (`Noether`, completed with bounded concern)
-- Exceptional final reviewer: `019f7412-063a-77e3-b0b0-e2991edecf32` (`Lagrange`, completed)
+- Risk signals: approval/security boundary, optimistic concurrency, schema and persistence contract changes, coordinator integration, expected implementation over 200 lines
 - Task review round: exceptional 2/2 authorized by user on 2026-07-18
-- Review status: `APPROVED`; all original and exceptional-round Critical/Important/Minor findings closed
-- Unresolved findings: none; bounded thread-cancellation/result-unknown probe and restart handling remain intentionally assigned to the recovery task
+- Task reviewers: `019f7435-be74-72f0-97d4-3d28dee6106b` (`Ampere`, completed with changes requested); `019f74b4-791a-7f62-a408-ca82a4bf2752` (`Dirac`, final exceptional re-review completed with changes requested)
+- Fix agent: `019f7443-5750-7db1-b487-8ee72c466928` (`Hooke`, completed)
+- Exceptional fix agent: `019f749c-50d9-7aa3-9a2d-901264c501c6` (`Fermat`, completed)
+- Review status: BLOCKED after the user-authorized second fix/re-review round; Task 7 remains unchecked
+- Unresolved findings: 1 Critical (`RESULT_UNKNOWN` is not a global guard before low-risk forward dispatch), 1 Important (supported `SecretRef` is rejected before redaction), and 1 Minor (current approvals do not enforce a non-empty binding digest), recorded in `.superpowers/sdd/task-7-final-rereview-result.md`; real legacy payload migration compatibility is closed
