@@ -16,6 +16,7 @@ from changepilot.workflow.application import coordinator as coordinator_module
 from changepilot.workflow.application.coordinator import (
     Coordinator,
     ExecutionOutcome,
+    OutcomePersistenceError,
 )
 from changepilot.workflow.application.tooling import ToolRegistry
 from changepilot.workflow.domain.definitions import WorkflowDefinition
@@ -27,6 +28,7 @@ from tests.support.fakes import (
     BlockingTool,
     ConcurrencyTrackingTool,
     DeterministicIdentifiers,
+    FailOnCommitUnitOfWorkFactory,
     FakeClock,
     FakeOutput,
     ScriptedTool,
@@ -72,6 +74,9 @@ def _make_runtime(
     step_ids: tuple[str, ...] = ("inspect",),
     track_transactions: bool = False,
     tool: ScriptedTool | None = None,
+    run_id_selector=None,
+    uow_factory_wrapper=None,
+    max_attempts: int = 3,
 ) -> Runtime:
     store = MemoryStore()
     raw_uow_factory = lambda: MemoryUnitOfWork(store)
@@ -90,7 +95,7 @@ def _make_runtime(
                     "tool": {"name": "inspect", "version": "1.0.0"},
                     "arguments": {"value": "checked"},
                     "retry": {
-                        "max_attempts": 3,
+                        "max_attempts": max_attempts,
                         "initial_backoff_seconds": 1.0,
                     },
                 }
@@ -121,18 +126,19 @@ def _make_runtime(
             uow.steps.add(step)
         uow.commit()
 
-    uow_factory = (
-        TrackingUnitOfWorkFactory(raw_uow_factory)
-        if track_transactions
-        else raw_uow_factory
-    )
+    if uow_factory_wrapper is not None:
+        uow_factory = uow_factory_wrapper(raw_uow_factory)
+    elif track_transactions:
+        uow_factory = TrackingUnitOfWorkFactory(raw_uow_factory)
+    else:
+        uow_factory = raw_uow_factory
 
     coordinator = Coordinator(
         uow_factory=uow_factory,
         tools=registry,
         clock=clock,
         identifiers=DeterministicIdentifiers(),
-        run_id_selector=lambda: "run-1",
+        run_id_selector=run_id_selector or (lambda: "run-1"),
         concurrency=concurrency,
     )
     return Runtime(
@@ -513,6 +519,98 @@ def test_completed_sibling_is_persisted_while_other_worker_is_blocked() -> None:
         runtime.coordinator.close(wait=True)
 
 
+def test_completed_future_is_collected_when_selector_temporarily_returns_none() -> None:
+    selected_run = ["run-1"]
+    tool = BlockingTool("inspect")
+    runtime = _make_runtime(
+        tool=tool,
+        run_id_selector=lambda: selected_run[0],
+    )
+
+    first = runtime.coordinator.run_once()
+    assert tool.started.wait(timeout=1)
+    assert first.dispatched == ("inspect",)
+
+    tool.release.set()
+    assert tool.finished.wait(timeout=1)
+    selected_run[0] = None
+    second = runtime.coordinator.run_once()
+
+    assert second.blocked_reason == "no_run_selected"
+    assert runtime.query.attempts("run-1", "inspect")[0].status == "success"
+    assert runtime.query.step("run-1", "inspect").state is StepState.SUCCEEDED
+    runtime.coordinator.close(wait=True)
+
+
+def test_ready_run_reports_capacity_when_another_run_occupies_executor() -> None:
+    selected_run = ["run-1"]
+    tool = BlockingTool("inspect")
+    runtime = _make_runtime(
+        concurrency=1,
+        tool=tool,
+        run_id_selector=lambda: selected_run[0],
+    )
+    with runtime.uow_factory() as uow:
+        definition = uow.definitions.get("workflow-1", 1)
+        run = WorkflowRun.new(
+            run_id="run-2",
+            definition_id=definition.definition_id,
+            definition_version=definition.version,
+            definition_digest=definition.digest,
+        )
+        uow.runs.add(run)
+        uow.steps.add(
+            StepRun(
+                run_id="run-2",
+                step_id="inspect",
+                state=StepState.READY,
+                revision=1,
+            )
+        )
+        uow.commit()
+
+    first = runtime.coordinator.run_once()
+    assert tool.started.wait(timeout=1)
+    assert first.dispatched == ("inspect",)
+
+    try:
+        selected_run[0] = "run-2"
+        second = runtime.coordinator.run_once()
+
+        assert second.blocked_reason == "capacity"
+        assert runtime.query.step("run-2", "inspect").state is StepState.READY
+        assert runtime.query.attempts("run-2", "inspect") == ()
+    finally:
+        tool.release.set()
+        assert tool.finished.wait(timeout=1)
+        runtime.coordinator.close(wait=True)
+
+
+def test_close_retries_done_outcome_after_second_transaction_failure() -> None:
+    tool = BlockingTool("inspect")
+    runtime = _make_runtime(
+        tool=tool,
+        uow_factory_wrapper=lambda factory: FailOnCommitUnitOfWorkFactory(
+            factory,
+            fail_on=2,
+        ),
+    )
+
+    first = runtime.coordinator.run_once()
+    assert tool.started.wait(timeout=1)
+    assert first.dispatched == ("inspect",)
+    tool.release.set()
+    assert tool.finished.wait(timeout=1)
+
+    with pytest.raises(OutcomePersistenceError, match="outcome persistence failed"):
+        runtime.coordinator.close(wait=False)
+    assert runtime.query.attempts("run-1", "inspect")[0].status == "running"
+
+    runtime.coordinator.close(wait=False)
+    assert runtime.query.attempts("run-1", "inspect")[0].status == "success"
+    assert runtime.query.step("run-1", "inspect").state is StepState.SUCCEEDED
+
+
 def test_worker_peak_is_measured_and_bounded_by_configured_concurrency() -> None:
     tool = ConcurrencyTrackingTool("inspect", expected_peak=2)
     runtime = _make_runtime(
@@ -590,6 +688,32 @@ def test_submit_failure_is_persisted_as_retryable_without_orphan_running(
     assert rejected.error_message == "tool submission failed"
     assert runtime.query.step("run-1", "step-b").state is StepState.RETRY_WAIT
     runtime.coordinator.close(wait=True)
+
+
+def test_exhausted_submit_failure_stops_current_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _make_runtime(
+        concurrency=2,
+        step_ids=("step-a", "step-b"),
+        max_attempts=1,
+    )
+
+    def fail_submit(self, *args, **kwargs):
+        raise RuntimeError("submit exhausted")
+
+    monkeypatch.setattr(ThreadPoolExecutor, "submit", fail_submit)
+
+    try:
+        report = runtime.coordinator.run_once()
+
+        assert report.dispatched == ("step-a",)
+        assert runtime.query.run("run-1").state is RunState.FAILED
+        assert runtime.query.step("run-1", "step-a").state is StepState.FAILED
+        assert runtime.query.step("run-1", "step-b").state is StepState.READY
+        assert runtime.query.attempts("run-1", "step-b") == ()
+    finally:
+        runtime.coordinator.close(wait=True)
 
 
 def test_future_exception_isolated_from_completed_sibling(

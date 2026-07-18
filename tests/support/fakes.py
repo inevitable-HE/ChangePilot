@@ -210,3 +210,38 @@ class _TrackedUnitOfWork:
         self._inner.commit()
         with self._tracker._lock:
             self._tracker.commits += 1
+
+
+class FailOnCommitUnitOfWorkFactory:
+    def __init__(self, factory: Callable[[], object], *, fail_on: int) -> None:
+        self._factory = factory
+        self._fail_on = fail_on
+        self._lock = Lock()
+        self._commit_count = 0
+
+    def __call__(self):
+        return _FailOnCommitUnitOfWork(self, self._factory())
+
+
+class _FailOnCommitUnitOfWork:
+    def __init__(self, factory: FailOnCommitUnitOfWorkFactory, inner: object) -> None:
+        self._factory = factory
+        self._inner = inner
+
+    def __enter__(self):
+        self._inner.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._inner.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    def commit(self) -> None:
+        with self._factory._lock:
+            self._factory._commit_count += 1
+            commit_number = self._factory._commit_count
+        if commit_number == self._factory._fail_on:
+            raise RuntimeError("injected persistence failure")
+        self._inner.commit()

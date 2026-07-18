@@ -46,6 +46,10 @@ class CoordinationReport:
     blocked_reason: str | None = None
 
 
+class OutcomePersistenceError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class StepAttempt:
     run_id: str
@@ -124,11 +128,11 @@ class Coordinator:
         if self._closed:
             return CoordinationReport(run_id=None, blocked_reason="coordinator_closed")
 
+        completed, collection_failed = self._collect_outcomes()
+
         run_id = self._run_id_selector()
         if run_id is None:
             return CoordinationReport(run_id=None, blocked_reason="no_run_selected")
-
-        completed, collection_failed = self._collect_outcomes()
 
         with self._uow_factory() as uow:
             selected_run = uow.runs.get(run_id)
@@ -155,16 +159,19 @@ class Coordinator:
         self._promote_dependency_ready_steps(run_id)
         definition, step_runs = self._load_definition_and_steps(run_id)
         available_capacity = self._available_capacity()
-        candidates = tuple(
+        ready_candidates = tuple(
             step
             for step in ready_steps(definition, step_runs)
             if _step_run(step_runs, step.id).state is StepState.READY
-        )[:available_capacity]
+        )
+        candidates = ready_candidates[:available_capacity]
         if not candidates:
             with self._uow_factory() as uow:
                 run = uow.runs.get(run_id)
             if run is not None and run.state in _TERMINAL_RUN_STATES:
                 blocked_reason = "run_terminal"
+            elif ready_candidates and available_capacity == 0:
+                blocked_reason = "capacity"
             elif any(step_run.state is StepState.RETRY_WAIT for step_run in step_runs):
                 blocked_reason = "retry_backoff"
             elif any(step_run.state is StepState.RESULT_UNKNOWN for step_run in step_runs):
@@ -205,6 +212,10 @@ class Coordinator:
                     ),
                     sensitive_paths=prepared.sensitive_paths,
                 )
+                with self._uow_factory() as uow:
+                    run = uow.runs.get(run_id)
+                if run is not None and run.state in _TERMINAL_RUN_STATES:
+                    break
                 continue
             self._owned_futures[future] = _OwnedFuture(
                 request=prepared.request,
@@ -228,15 +239,21 @@ class Coordinator:
         if self._closed and not wait:
             return
 
-        self._collect_outcomes()
+        _, persistence_failed = self._collect_outcomes()
+        if persistence_failed:
+            raise OutcomePersistenceError("outcome persistence failed during close")
         if wait:
             self._executor.shutdown(wait=True, cancel_futures=False)
-            self._collect_outcomes()
+            _, persistence_failed = self._collect_outcomes()
+            if persistence_failed:
+                raise OutcomePersistenceError("outcome persistence failed during close")
         else:
             for owned in tuple(self._owned_futures.values()):
-                if owned.outcome_persisted or owned.future.done():
+                if owned.outcome_persisted:
                     continue
-                if owned.future.cancel():
+                if owned.future.done():
+                    outcome = _outcome_from_future(owned)
+                elif owned.future.cancel():
                     outcome = _failed_outcome(
                         owned.request,
                         error_class=ErrorClass.RETRYABLE,
@@ -248,8 +265,18 @@ class Coordinator:
                         error_class=ErrorClass.RESULT_UNKNOWN,
                         safe_message="tool result unknown",
                     )
-                self._persist_outcome(outcome, sensitive_paths=owned.sensitive_paths)
+                try:
+                    self._persist_outcome(
+                        outcome,
+                        sensitive_paths=owned.sensitive_paths,
+                    )
+                except Exception as exc:
+                    raise OutcomePersistenceError(
+                        "outcome persistence failed during close"
+                    ) from exc
                 owned.outcome_persisted = True
+                if owned.future.done():
+                    self._owned_futures.pop(owned.future, None)
             self._executor.shutdown(wait=False, cancel_futures=True)
         self._closed = True
 
