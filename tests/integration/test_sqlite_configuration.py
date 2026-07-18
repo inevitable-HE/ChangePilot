@@ -190,6 +190,8 @@ def test_alembic_upgrade_creates_runtime_schema_and_constraints(tmp_path: Path) 
         assert "ck_approval_requests_status" in approval_table_sql
         assert "ck_approval_requests_decision" in approval_table_sql
         assert "ck_approval_requests_state" in approval_table_sql
+        assert "binding_digest IS NOT NULL" in approval_table_sql
+        assert "status = 'legacy' AND version = 0 AND binding_digest IS NULL" in approval_table_sql
 
     engine.dispose()
 
@@ -397,6 +399,14 @@ def test_legacy_0001_upgrade_to_head_and_downgrade_preserves_approval_data(
             assert len(uow.approvals.list("legacy-run-a")) == 4
     finally:
         coordinator.close(wait=True)
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE approval_requests SET binding_digest = NULL "
+                "WHERE run_id = ? AND approval_key = ?",
+                ("legacy-run-a", current_pending.id),
+            )
 
     with engine.begin() as connection:
         connection.exec_driver_sql(

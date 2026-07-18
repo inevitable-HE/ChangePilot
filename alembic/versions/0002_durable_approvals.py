@@ -57,9 +57,9 @@ def upgrade() -> None:
         batch_op.create_check_constraint(
             "ck_approval_requests_state",
             "(status = 'legacy' AND version = 0 AND binding_digest IS NULL) OR "
-            "(status = 'pending' AND version = 0 AND decision IS NULL) OR "
-            "(status IN ('approved', 'rejected') AND version >= 1 AND decision = status) OR "
-            "(status = 'invalidated' AND version >= 1 AND decision IS NULL)",
+            "(status = 'pending' AND version = 0 AND binding_digest IS NOT NULL AND decision IS NULL) OR "
+            "(status IN ('approved', 'rejected') AND version >= 1 AND binding_digest IS NOT NULL AND decision = status) OR "
+            "(status = 'invalidated' AND version >= 1 AND binding_digest IS NOT NULL AND decision IS NULL)",
         )
 
     op.create_index(

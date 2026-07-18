@@ -140,7 +140,7 @@ def _approval_request(**changes: object) -> ApprovalRequest:
         "tool_name": "schema.apply",
         "tool_version": "1.0.0",
         "redacted_arguments": {"target": "v2"},
-        "binding_digest": "binding-digest",
+        "binding_digest": "a" * 64,
         "risk_reasons": ("tool_risk_high",),
         "created_at": "2026-07-17T00:00:00+00:00",
     }
@@ -153,6 +153,17 @@ def test_approval_request_normalizes_status_to_strong_enum() -> None:
 
     assert isinstance(request.status, Enum)
     assert request.status.value == "pending"
+
+
+@pytest.mark.parametrize(
+    "binding_digest",
+    [None, "", "a" * 63, "g" * 64],
+)
+def test_current_approval_request_requires_a_sha256_binding_digest(
+    binding_digest: object,
+) -> None:
+    with pytest.raises(ValueError, match="binding digest"):
+        _approval_request(binding_digest=binding_digest)
 
 
 @pytest.mark.parametrize(

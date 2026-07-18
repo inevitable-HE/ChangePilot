@@ -29,7 +29,7 @@ from changepilot.workflow.domain.definitions import WorkflowDefinition
 from changepilot.workflow.domain.runs import StepRun, WorkflowRun
 from changepilot.workflow.domain.states import RunState, StepState
 from changepilot.workflow.ports.persistence import OptimisticLockError
-from changepilot.workflow.ports.tools import ToolRisk
+from changepilot.workflow.ports.tools import SecretRef, ToolRisk
 from tests.support.fakes import (
     BlockingTool,
     DeterministicIdentifiers,
@@ -279,6 +279,50 @@ def test_approval_snapshot_rejects_non_string_keys_before_redaction() -> None:
         runtime.coordinator.close(wait=True)
 
 
+def test_secret_reference_creates_a_redacted_approval_through_coordinator() -> None:
+    tool = _tool("schema.apply", risk=ToolRisk.HIGH)
+    runtime = _make_runtime(steps=[_protected_step()], tools=[tool])
+    try:
+        with runtime.raw_uow_factory() as uow:
+            run = uow.runs.get(runtime.run_id)
+            definition = uow.definitions.get(
+                run.definition_id,
+                run.definition_version,
+            )
+        secret_name = "PROD_DATABASE_PASSWORD"
+        runtime.store.definitions[(definition.definition_id, definition.version)] = replace(
+            definition,
+            steps=(
+                replace(
+                    definition.steps[0],
+                    arguments=MappingProxyType(
+                        {
+                            "value": SecretRef(
+                                provider="env",
+                                name=secret_name,
+                            )
+                        }
+                    ),
+                ),
+            ),
+        )
+
+        report = runtime.coordinator.run_once()
+        request = runtime.pending()
+        approval_event = next(
+            event for event in runtime.events() if event.event_type == "approval.created"
+        )
+
+        assert report.blocked_reason == "approval_pending"
+        assert request.redacted_arguments == {"value": "[REDACTED]"}
+        assert len(request.binding_digest) == 64
+        assert secret_name not in repr(request)
+        assert secret_name not in repr(approval_event.summary)
+        assert tool.calls == []
+    finally:
+        runtime.coordinator.close(wait=True)
+
+
 def test_high_risk_barrier_drains_existing_future_before_becoming_waiting() -> None:
     slow = BlockingTool("inspect")
     fast = _tool("precheck")
@@ -393,6 +437,95 @@ def test_fresh_coordinator_requires_recovery_for_persisted_running_work(
         assert protected.calls == []
     finally:
         restarted.coordinator.close(wait=True)
+
+
+@pytest.mark.parametrize("recovery_fact", ["step_state", "attempt_only"])
+def test_sqlite_restart_recovery_blocks_independent_low_risk_dispatch(
+    tmp_path: Path,
+    recovery_fact: str,
+) -> None:
+    database_path = tmp_path / f"global-recovery-{recovery_fact}.db"
+    uncertain = _ProbeForbiddenTool("inspect")
+    ready = _ProbeForbiddenTool("safe.check")
+    seeded = _make_runtime(
+        steps=[
+            {
+                "id": "uncertain",
+                "tool": {"name": "inspect", "version": "1.0.0"},
+                "arguments": {"value": "uncertain"},
+            },
+            {
+                "id": "independent-ready",
+                "tool": {"name": "safe.check", "version": "1.0.0"},
+                "arguments": {"value": "safe"},
+            },
+        ],
+        tools=[uncertain, ready],
+        sqlite_path=database_path,
+    )
+    with seeded.raw_uow_factory() as uow:
+        run = uow.runs.get(seeded.run_id)
+        running_run, run_event = run.transition(
+            RunState.RUNNING,
+            occurred_at=seeded.clock.now(),
+        )
+        uow.runs.save(running_run, expected_revision=run.revision)
+        uow.events.append(run_event)
+        uncertain_step = uow.steps.get(seeded.run_id, "uncertain")
+        uow.steps.save(
+            replace(
+                uncertain_step,
+                state=(
+                    StepState.RESULT_UNKNOWN
+                    if recovery_fact == "step_state"
+                    else StepState.SUCCEEDED
+                ),
+                revision=uncertain_step.revision + 1,
+            ),
+            expected_revision=uncertain_step.revision,
+        )
+        if recovery_fact == "attempt_only":
+            uow.attempts.add(
+                StepAttempt(
+                    run_id=seeded.run_id,
+                    step_id="uncertain",
+                    attempt_no=1,
+                    phase="forward",
+                    attempt_id="attempt-before-restart",
+                    status="result_unknown",
+                    idempotency_key="logical-key",
+                    started_at=seeded.clock.now(),
+                    completed_at=seeded.clock.now(),
+                    error_class="result_unknown",
+                )
+            )
+        uow.commit()
+    seeded.coordinator.close(wait=True)
+    seeded.store.dispose()
+
+    restarted = _make_runtime(
+        steps=[],
+        tools=[uncertain, ready],
+        sqlite_path=database_path,
+    )
+    try:
+        with restarted.raw_uow_factory() as uow:
+            attempts_before = len(uow.attempts.list(restarted.run_id))
+            events_before = len(uow.events.list(restarted.run_id))
+
+        report = restarted.coordinator.run_once()
+
+        with restarted.raw_uow_factory() as uow:
+            assert len(uow.attempts.list(restarted.run_id)) == attempts_before
+            assert len(uow.events.list(restarted.run_id)) == events_before
+        assert report.blocked_reason == "approval_recovery_required"
+        assert restarted.run().state is RunState.RUNNING
+        assert restarted.pending() is None
+        assert uncertain.calls == []
+        assert ready.calls == []
+    finally:
+        restarted.coordinator.close(wait=True)
+        restarted.store.dispose()
 
 
 def _seed_approval_with_recovery_fact(
@@ -1160,7 +1293,7 @@ def test_approval_create_decide_and_invalidate_append_structured_events() -> Non
         )
         stale = replace(
             approved,
-            binding_digest="stale-binding-digest",
+            binding_digest="b" * 64,
             version=approved.version + 1,
         )
         with runtime.raw_uow_factory() as uow:

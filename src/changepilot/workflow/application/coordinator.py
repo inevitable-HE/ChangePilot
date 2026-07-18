@@ -131,6 +131,7 @@ class Coordinator:
             thread_name_prefix="changepilot-tool",
         )
         self._owned_futures: dict[Future[ExecutionOutcome], _OwnedFuture] = {}
+        self._locally_persisted_result_unknown_runs: set[str] = set()
         self._closed = False
 
     def run_once(self) -> CoordinationReport:
@@ -145,6 +146,12 @@ class Coordinator:
 
         with self._uow_factory() as uow:
             selected_run = uow.runs.get(run_id)
+        if selected_run is not None and selected_run.state in _TERMINAL_RUN_STATES:
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="run_terminal",
+            )
         if (
             selected_run is not None
             and selected_run.state is RunState.WAITING_APPROVAL
@@ -154,12 +161,6 @@ class Coordinator:
                 run_id=run_id,
                 completed=_completed_for_run(completed, run_id),
                 blocked_reason="approval_recovery_required",
-            )
-        if selected_run is not None and selected_run.state in _TERMINAL_RUN_STATES:
-            return CoordinationReport(
-                run_id=run_id,
-                completed=_completed_for_run(completed, run_id),
-                blocked_reason="run_terminal",
             )
         if selected_run is not None and selected_run.state not in _FORWARD_RUN_STATES:
             return CoordinationReport(
@@ -172,6 +173,20 @@ class Coordinator:
                 run_id=run_id,
                 completed=_completed_for_run(completed, run_id),
                 blocked_reason=ErrorClass.INTERNAL_CONSISTENCY.value,
+            )
+        if (
+            selected_run is not None
+            and not self._has_unpersisted_outcome(run_id)
+            and self._has_persisted_recovery_work(run_id)
+        ):
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason=(
+                    "result_unknown"
+                    if run_id in self._locally_persisted_result_unknown_runs
+                    else "approval_recovery_required"
+                ),
             )
 
         self._promote_due_retries(run_id)
@@ -853,6 +868,8 @@ class Coordinator:
                 uow.runs.save(failed_run, expected_revision=run.revision)
                 uow.events.append(run_event)
             uow.commit()
+        if outcome.error_class == ErrorClass.RESULT_UNKNOWN.value:
+            self._locally_persisted_result_unknown_runs.add(outcome.run_id)
 
 
 def _execute_request(request: _ExecutionRequest) -> ExecutionOutcome:
