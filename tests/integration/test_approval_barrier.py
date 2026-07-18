@@ -5,6 +5,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from changepilot.workflow.adapters.persistence.memory import MemoryStore, MemoryUnitOfWork
@@ -100,6 +101,12 @@ class _NoEffectTool(ScriptedTool):
 class _ProbeForbiddenTool(ScriptedTool):
     def probe(self, query):
         raise AssertionError("Task 7 must not probe during approval recovery gating")
+
+
+class _SecretReferenceArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    credential: SecretRef
 
 
 def _make_runtime(
@@ -279,34 +286,24 @@ def test_approval_snapshot_rejects_non_string_keys_before_redaction() -> None:
         runtime.coordinator.close(wait=True)
 
 
-def test_secret_reference_creates_a_redacted_approval_through_coordinator() -> None:
+def test_definition_secret_reference_mapping_is_redacted_before_sqlite_approval_persistence(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "secret-reference.db"
+    secret_provider = "env"
+    secret_name = "PROD_DATABASE_PASSWORD"
     tool = _tool("schema.apply", risk=ToolRisk.HIGH)
-    runtime = _make_runtime(steps=[_protected_step()], tools=[tool])
+    tool.descriptor = tool.descriptor.model_copy(
+        update={"input_model": _SecretReferenceArguments}
+    )
+    runtime = _make_runtime(
+        steps=[_protected_step(arguments={
+            "credential": {"provider": secret_provider, "name": secret_name}
+        })],
+        tools=[tool],
+        sqlite_path=database_path,
+    )
     try:
-        with runtime.raw_uow_factory() as uow:
-            run = uow.runs.get(runtime.run_id)
-            definition = uow.definitions.get(
-                run.definition_id,
-                run.definition_version,
-            )
-        secret_name = "PROD_DATABASE_PASSWORD"
-        runtime.store.definitions[(definition.definition_id, definition.version)] = replace(
-            definition,
-            steps=(
-                replace(
-                    definition.steps[0],
-                    arguments=MappingProxyType(
-                        {
-                            "value": SecretRef(
-                                provider="env",
-                                name=secret_name,
-                            )
-                        }
-                    ),
-                ),
-            ),
-        )
-
         report = runtime.coordinator.run_once()
         request = runtime.pending()
         approval_event = next(
@@ -314,13 +311,34 @@ def test_secret_reference_creates_a_redacted_approval_through_coordinator() -> N
         )
 
         assert report.blocked_reason == "approval_pending"
-        assert request.redacted_arguments == {"value": "[REDACTED]"}
+        assert request.redacted_arguments == {"credential": "[REDACTED]"}
         assert len(request.binding_digest) == 64
+        assert secret_provider not in repr(request)
         assert secret_name not in repr(request)
+        assert secret_provider not in repr(approval_event.summary)
         assert secret_name not in repr(approval_event.summary)
         assert tool.calls == []
+
+        with runtime.store.connect() as connection:
+            persisted_payloads = "\n".join(
+                row[0]
+                for row in connection.execute(
+                    select(approval_requests.c.payload_json).union_all(
+                        select(audit_events.c.payload_json)
+                    )
+                )
+            )
+        assert secret_provider not in persisted_payloads
+        assert secret_name not in persisted_payloads
+
+        runtime.coordinator.close(wait=True)
+        runtime.store.dispose()
+        database_bytes = database_path.read_bytes()
+        assert secret_provider.encode("utf-8") not in database_bytes
+        assert secret_name.encode("utf-8") not in database_bytes
     finally:
         runtime.coordinator.close(wait=True)
+        runtime.store.dispose()
 
 
 def test_high_risk_barrier_drains_existing_future_before_becoming_waiting() -> None:
@@ -526,6 +544,63 @@ def test_sqlite_restart_recovery_blocks_independent_low_risk_dispatch(
     finally:
         restarted.coordinator.close(wait=True)
         restarted.store.dispose()
+
+
+def test_persisted_result_unknown_blocks_new_dispatch_while_owned_future_drains() -> None:
+    blocker = BlockingTool("blocker")
+    gate = _tool("gate")
+    uncertain = _tool("uncertain")
+    uncertain.script(["result_unknown"])
+    later = _tool("later")
+    runtime = _make_runtime(
+        steps=[
+            {
+                "id": "blocker",
+                "tool": {"name": "blocker", "version": "1.0.0"},
+                "arguments": {"value": "block"},
+            },
+            {
+                "id": "gate",
+                "tool": {"name": "gate", "version": "1.0.0"},
+                "arguments": {"value": "gate"},
+            },
+            {
+                "id": "uncertain",
+                "tool": {"name": "uncertain", "version": "1.0.0"},
+                "arguments": {"value": "uncertain"},
+            },
+            {
+                "id": "later",
+                "tool": {"name": "later", "version": "1.0.0"},
+                "arguments": {"value": "later"},
+                "depends_on": ["gate"],
+            },
+        ],
+        tools=[blocker, gate, uncertain, later],
+    )
+    try:
+        first = runtime.coordinator.run_once()
+        assert set(first.dispatched) == {"blocker", "gate", "uncertain"}
+        assert blocker.started.wait(timeout=1)
+        assert gate.wait_for_calls(1)
+        assert uncertain.wait_for_calls(1)
+
+        with runtime.raw_uow_factory() as uow:
+            attempts_before = len(uow.attempts.list(runtime.run_id))
+            events_before = len(uow.events.list(runtime.run_id))
+
+        report = runtime.coordinator.run_once()
+
+        with runtime.raw_uow_factory() as uow:
+            assert len(uow.attempts.list(runtime.run_id)) == attempts_before
+            assert len(uow.events.list(runtime.run_id)) == events_before + 2
+        assert report.blocked_reason == "result_unknown"
+        assert report.dispatched == ()
+        assert runtime.step("later").state is StepState.PENDING
+        assert later.calls == []
+    finally:
+        blocker.release.set()
+        runtime.coordinator.close(wait=True)
 
 
 def _seed_approval_with_recovery_fact(

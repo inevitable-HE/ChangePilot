@@ -176,7 +176,6 @@ class Coordinator:
             )
         if (
             selected_run is not None
-            and not self._has_unpersisted_outcome(run_id)
             and self._has_persisted_recovery_work(run_id)
         ):
             return CoordinationReport(
@@ -420,11 +419,17 @@ class Coordinator:
         step: StepDefinition,
     ) -> tuple[object, str, tuple[str, ...]]:
         descriptor = self._tools.descriptor_for(step.tool.name, step.tool.version)
-        canonical_arguments = canonical_json_value(step.arguments)
+        canonical_json_value(step.arguments)
+        coerced_arguments = self._tools.coerce_arguments(
+            step.tool.name,
+            step.tool.version,
+            step.arguments,
+        )
         redacted_arguments = redact(
-            canonical_arguments,
+            coerced_arguments,
             sensitive_paths=descriptor.sensitive_argument_paths,
         )
+        redacted_arguments = canonical_json_value(redacted_arguments)
         binding_digest = approval_binding_digest(
             definition.digest,
             step.id,
@@ -449,10 +454,10 @@ class Coordinator:
         step: StepDefinition,
     ) -> str | None:
         _arguments, binding_digest, _reasons = self._approval_snapshot(definition, step)
-        if self._has_unpersisted_outcome(run_id):
-            return "approval_draining"
         if self._has_persisted_recovery_work(run_id):
             return "approval_recovery_required"
+        if self._has_unpersisted_outcome(run_id):
+            return "approval_draining"
         with self._uow_factory() as uow:
             approvals = uow.approvals.list(run_id)
         if any(
@@ -487,21 +492,39 @@ class Coordinator:
                 )
             return self._uow_has_persisted_recovery_work(uow, run, definition)
 
-    @staticmethod
     def _uow_has_persisted_recovery_work(
+        self,
         uow: object,
         run: object,
         definition: WorkflowDefinition,
     ) -> bool:
         if approval_recovery_required(uow, run):
             return True
+        owned_steps = {
+            owned.request.context.step_id
+            for owned in self._owned_futures.values()
+            if (
+                owned.request.context.run_id == run.run_id
+                and not owned.outcome_persisted
+            )
+        }
+        owned_attempts = {
+            (owned.request.context.step_id, owned.request.context.attempt_number)
+            for owned in self._owned_futures.values()
+            if (
+                owned.request.context.run_id == run.run_id
+                and not owned.outcome_persisted
+            )
+        }
         if any(
             uow.steps.get(run.run_id, step.id).state is StepState.RUNNING
+            and step.id not in owned_steps
             for step in definition.steps
         ):
             return True
         return any(
             getattr(attempt, "status", None) == "running"
+            and (attempt.step_id, attempt.attempt_no) not in owned_attempts
             for attempt in uow.attempts.list(run.run_id)
         )
 

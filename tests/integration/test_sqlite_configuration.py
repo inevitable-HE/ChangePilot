@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import IntegrityError
 
 from changepilot.workflow.application.approvals import (
@@ -14,6 +15,7 @@ from changepilot.workflow.application.approvals import (
 )
 from changepilot.workflow.application.coordinator import Coordinator
 from changepilot.workflow.application.tooling import ToolRegistry
+from changepilot.workflow.adapters.persistence.schema import metadata
 from changepilot.workflow.ports.persistence import PersistenceError
 from tests.support.fakes import (
     DeterministicIdentifiers,
@@ -38,6 +40,12 @@ RUNTIME_TABLES = {
 
 LEGACY_APPROVAL_MODULE = "tests.contract.uow_contract"
 LEGACY_APPROVAL_QUALNAME = "ApprovalRecord"
+
+
+class _LegacyArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    target: str
 
 
 def _legacy_80da0a0_payload(
@@ -87,6 +95,68 @@ def _foreign_keys_by_id(connection, table_name: str) -> dict[int, list[tuple]]:
     for row in connection.exec_driver_sql(f"PRAGMA foreign_key_list('{table_name}')"):
         groups.setdefault(row[0], []).append(row)
     return groups
+
+
+def _insert_current_approval(connection) -> None:
+    connection.exec_driver_sql(
+        "INSERT INTO workflow_definitions "
+        "(definition_id, version, digest, definition_json) VALUES (?, ?, ?, ?)",
+        ("definition", 1, "d" * 64, '{"definition_id":"definition","steps":[],"version":1}'),
+    )
+    connection.exec_driver_sql(
+        "INSERT INTO workflow_runs "
+        "(run_id, definition_id, definition_version, definition_digest, state, revision) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("run", "definition", 1, "d" * 64, "running", 0),
+    )
+    connection.exec_driver_sql(
+        "INSERT INTO approval_requests "
+        "(run_id, approval_key, record_module, record_qualname, payload_json, "
+        "version, binding_digest, status, decision) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "run",
+            "current",
+            "tests.fixture",
+            "ApprovalRecord",
+            "{}",
+            0,
+            "a" * 64,
+            "pending",
+            None,
+        ),
+    )
+
+
+@pytest.mark.parametrize("schema_source", ["create_all", "alembic"])
+@pytest.mark.parametrize("invalid_digest", [None, "", "a" * 63, "g" * 64])
+def test_current_approval_digest_constraints_reject_invalid_values(
+    tmp_path: Path,
+    schema_source: str,
+    invalid_digest: str | None,
+) -> None:
+    sqlite = _load_module("changepilot.workflow.adapters.persistence.sqlite")
+    database_path = tmp_path / f"approval-digest-{schema_source}.db"
+    engine = sqlite.create_sqlite_engine(database_path)
+    if schema_source == "create_all":
+        metadata.create_all(engine)
+    else:
+        engine.dispose()
+        command.upgrade(_alembic_config(database_path), "head")
+        engine = sqlite.create_sqlite_engine(database_path)
+
+    with engine.begin() as connection:
+        _insert_current_approval(connection)
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE approval_requests SET binding_digest = ? "
+                "WHERE run_id = 'run' AND approval_key = 'current'",
+                (invalid_digest,),
+            )
+
+    engine.dispose()
 
 
 def test_frozen_migration_uses_explicit_alembic_ddl() -> None:
@@ -381,6 +451,9 @@ def test_legacy_0001_upgrade_to_head_and_downgrade_preserves_approval_data(
         )
 
     tool = ScriptedTool("schema.apply", "1.0.0")
+    tool.descriptor = tool.descriptor.model_copy(
+        update={"input_model": _LegacyArguments}
+    )
     coordinator = Coordinator(
         uow_factory=lambda: sqlite.SQLiteUnitOfWork(engine),
         tools=ToolRegistry([tool]),

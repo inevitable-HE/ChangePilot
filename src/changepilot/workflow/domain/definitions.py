@@ -309,7 +309,10 @@ def _step_to_canonical(step: StepDefinition) -> dict[str, object]:
 
 def _thaw_value(value: object) -> object:
     if isinstance(value, MappingProxyType):
-        return {key: _thaw_value(item) for key, item in value.items()}
+        thawed = {key: _thaw_value(item) for key, item in value.items()}
+        if set(thawed) == {"provider", "name"}:
+            return {"provider": "[REDACTED]", "name": "[REDACTED]"}
+        return thawed
     if isinstance(value, tuple):
         return [_thaw_value(item) for item in value]
     return value

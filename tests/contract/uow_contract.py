@@ -40,7 +40,7 @@ class ApprovalRecord:
     approval_key: str
     version: int = 0
     status: str = "pending"
-    binding_digest: str = "binding-1"
+    binding_digest: str = "a" * 64
     decision: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
 
@@ -947,7 +947,7 @@ class UnitOfWorkContract:
                 ApprovalRecord(
                     run_id="run-1",
                     approval_key="approval-2",
-                    binding_digest="binding-2",
+                    binding_digest="b" * 64,
                 )
             )
             with pytest.raises(persistence_modules["ports"].UniquenessError):

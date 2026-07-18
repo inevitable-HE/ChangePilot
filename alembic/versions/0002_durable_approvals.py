@@ -10,6 +10,12 @@ branch_labels = None
 depends_on = None
 
 
+CURRENT_BINDING_DIGEST_CHECK = (
+    "binding_digest IS NOT NULL AND length(binding_digest) = 64 "
+    "AND binding_digest NOT GLOB '*[^0-9A-Fa-f]*'"
+)
+
+
 def upgrade() -> None:
     op.drop_index(
         "ix_approval_requests_pending_unique",
@@ -57,9 +63,15 @@ def upgrade() -> None:
         batch_op.create_check_constraint(
             "ck_approval_requests_state",
             "(status = 'legacy' AND version = 0 AND binding_digest IS NULL) OR "
-            "(status = 'pending' AND version = 0 AND binding_digest IS NOT NULL AND decision IS NULL) OR "
-            "(status IN ('approved', 'rejected') AND version >= 1 AND binding_digest IS NOT NULL AND decision = status) OR "
-            "(status = 'invalidated' AND version >= 1 AND binding_digest IS NOT NULL AND decision IS NULL)",
+            "(status = 'pending' AND version = 0 AND "
+            + CURRENT_BINDING_DIGEST_CHECK
+            + " AND decision IS NULL) OR "
+            "(status IN ('approved', 'rejected') AND version >= 1 AND "
+            + CURRENT_BINDING_DIGEST_CHECK
+            + " AND decision = status) OR "
+            "(status = 'invalidated' AND version >= 1 AND "
+            + CURRENT_BINDING_DIGEST_CHECK
+            + " AND decision IS NULL)",
         )
 
     op.create_index(

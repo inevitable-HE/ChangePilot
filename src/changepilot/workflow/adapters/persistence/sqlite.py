@@ -93,9 +93,15 @@ def _resolve_qualname(module_name: str, qualname: str):
 
 def _freeze_value(value: object) -> object:
     if isinstance(value, MappingProxyType):
-        return {key: _freeze_value(item) for key, item in value.items()}
+        frozen = {key: _freeze_value(item) for key, item in value.items()}
+        if set(frozen) == {"provider", "name"}:
+            return {"provider": "[REDACTED]", "name": "[REDACTED]"}
+        return frozen
     if isinstance(value, dict):
-        return {key: _freeze_value(item) for key, item in value.items()}
+        frozen = {key: _freeze_value(item) for key, item in value.items()}
+        if set(frozen) == {"provider", "name"}:
+            return {"provider": "[REDACTED]", "name": "[REDACTED]"}
+        return frozen
     if isinstance(value, list):
         return [_freeze_value(item) for item in value]
     if isinstance(value, tuple):
