@@ -395,6 +395,225 @@ def test_fresh_coordinator_requires_recovery_for_persisted_running_work(
         restarted.coordinator.close(wait=True)
 
 
+def _seed_approval_with_recovery_fact(
+    runtime: Runtime,
+    *,
+    approval_status: str,
+    recovery_fact: str,
+) -> ApprovalRequest:
+    with runtime.raw_uow_factory() as uow:
+        run = uow.runs.get(runtime.run_id)
+        definition = uow.definitions.get(run.definition_id, run.definition_version)
+        protected = next(step for step in definition.steps if step.id == "protected")
+        redacted_arguments, binding_digest, risk_reasons = (
+            runtime.coordinator._approval_snapshot(definition, protected)
+        )
+        request = ApprovalRequest(
+            id=f"request-{approval_status}-{recovery_fact}",
+            run_id=runtime.run_id,
+            definition_digest=definition.digest,
+            step_id=protected.id,
+            tool_name=protected.tool.name,
+            tool_version=protected.tool.version,
+            redacted_arguments=redacted_arguments,
+            binding_digest=binding_digest,
+            risk_reasons=risk_reasons,
+            created_at=runtime.clock.now(),
+        )
+        if approval_status != "pending":
+            request = replace(
+                request,
+                version=1,
+                status=approval_status,
+                decision=approval_status,
+                actor={"algorithm": "sha256", "digest": "a" * 64},
+                reason={"provided": False, "algorithm": None, "digest": None},
+                decided_at=runtime.clock.now(),
+            )
+
+        target_run_state = {
+            "pending": RunState.WAITING_APPROVAL,
+            "approved": RunState.RUNNING,
+            "rejected": RunState.CANCELLED,
+        }[approval_status]
+        uow.runs.save(
+            replace(
+                run,
+                state=target_run_state,
+                revision=run.revision + 1,
+            ),
+            expected_revision=run.revision,
+        )
+        uncertain = uow.steps.get(runtime.run_id, "uncertain")
+        if recovery_fact == "step_state":
+            uow.steps.save(
+                replace(
+                    uncertain,
+                    state=StepState.RESULT_UNKNOWN,
+                    revision=uncertain.revision + 1,
+                ),
+                expected_revision=uncertain.revision,
+            )
+        else:
+            uow.steps.save(
+                replace(
+                    uncertain,
+                    state=StepState.SUCCEEDED,
+                    revision=uncertain.revision + 1,
+                ),
+                expected_revision=uncertain.revision,
+            )
+            uow.attempts.add(
+                StepAttempt(
+                    run_id=runtime.run_id,
+                    step_id="uncertain",
+                    attempt_no=1,
+                    phase="forward",
+                    attempt_id="attempt-before-restart",
+                    status=(
+                        "result_unknown"
+                        if recovery_fact == "attempt_status"
+                        else "failed"
+                    ),
+                    idempotency_key="logical-key",
+                    started_at=runtime.clock.now(),
+                    completed_at=runtime.clock.now(),
+                    error_class=(
+                        "result_unknown"
+                        if recovery_fact == "attempt_error_class"
+                        else None
+                    ),
+                )
+            )
+        uow.approvals.add(request)
+        uow.commit()
+    return request
+
+
+@pytest.mark.parametrize("approval_status", ["pending", "approved", "rejected"])
+@pytest.mark.parametrize("decision", ["approved", "rejected"])
+def test_sqlite_restart_result_unknown_blocks_every_approval_decision(
+    tmp_path: Path,
+    approval_status: str,
+    decision: str,
+) -> None:
+    database_path = tmp_path / f"result-unknown-{approval_status}-{decision}.db"
+    uncertain = _tool("inspect")
+    protected = _tool("schema.apply", risk=ToolRisk.HIGH)
+    runtime = _make_runtime(
+        steps=[
+            {
+                "id": "uncertain",
+                "tool": {"name": "inspect", "version": "1.0.0"},
+                "arguments": {"value": "first"},
+            },
+            _protected_step(),
+        ],
+        tools=[uncertain, protected],
+        sqlite_path=database_path,
+    )
+    request = _seed_approval_with_recovery_fact(
+        runtime,
+        approval_status=approval_status,
+        recovery_fact="step_state",
+    )
+    runtime.coordinator.close(wait=True)
+    runtime.store.dispose()
+
+    restarted = _make_runtime(
+        steps=[],
+        tools=[uncertain, protected],
+        sqlite_path=database_path,
+    )
+    try:
+        before_run = restarted.run()
+        before_request = next(
+            item
+            for item in restarted.approval_records()
+            if item.id == request.id
+        )
+        with pytest.raises(ApprovalDecisionError, match="approval_recovery_required"):
+            restarted.approvals.decide(
+                restarted.run_id,
+                request.id,
+                decision,
+                expected_version=request.version,
+                binding_digest=request.binding_digest,
+                actor="ops-user",
+                reason="decision must wait for recovery",
+            )
+
+        assert restarted.run() == before_run
+        assert next(
+            item
+            for item in restarted.approval_records()
+            if item.id == request.id
+        ) == before_request
+        report = restarted.coordinator.run_once()
+        assert report.blocked_reason == (
+            "run_terminal"
+            if approval_status == "rejected"
+            else "approval_recovery_required"
+        )
+        assert protected.calls == []
+    finally:
+        restarted.coordinator.close(wait=True)
+        restarted.store.dispose()
+
+
+@pytest.mark.parametrize("recovery_fact", ["attempt_status", "attempt_error_class"])
+def test_sqlite_restart_attempt_result_unknown_blocks_approval_and_dispatch(
+    tmp_path: Path,
+    recovery_fact: str,
+) -> None:
+    database_path = tmp_path / f"result-unknown-{recovery_fact}.db"
+    uncertain = _tool("inspect")
+    protected = _tool("schema.apply", risk=ToolRisk.HIGH)
+    runtime = _make_runtime(
+        steps=[
+            {
+                "id": "uncertain",
+                "tool": {"name": "inspect", "version": "1.0.0"},
+                "arguments": {"value": "first"},
+            },
+            _protected_step(),
+        ],
+        tools=[uncertain, protected],
+        sqlite_path=database_path,
+    )
+    request = _seed_approval_with_recovery_fact(
+        runtime,
+        approval_status="pending",
+        recovery_fact=recovery_fact,
+    )
+    runtime.coordinator.close(wait=True)
+    runtime.store.dispose()
+
+    restarted = _make_runtime(
+        steps=[],
+        tools=[uncertain, protected],
+        sqlite_path=database_path,
+    )
+    try:
+        with pytest.raises(ApprovalDecisionError, match="approval_recovery_required"):
+            restarted.approvals.decide(
+                restarted.run_id,
+                request.id,
+                "approved",
+                expected_version=request.version,
+                binding_digest=request.binding_digest,
+                actor="ops-user",
+                reason="decision must wait for recovery",
+            )
+        assert restarted.coordinator.run_once().blocked_reason == (
+            "approval_recovery_required"
+        )
+        assert protected.calls == []
+    finally:
+        restarted.coordinator.close(wait=True)
+        restarted.store.dispose()
+
+
 def test_pending_request_survives_sqlite_restart_without_duplicate_or_execution(
     tmp_path: Path,
 ) -> None:

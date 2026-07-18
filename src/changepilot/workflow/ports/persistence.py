@@ -47,6 +47,19 @@ class ApprovalRecord(RunScopedRecord, Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class LegacyApprovalRecord:
+    run_id: str
+    approval_key: str
+    payload: object
+    record_module: str
+    record_qualname: str
+    decision: object
+    version: int = 0
+    binding_digest: None = None
+    status: str = "legacy"
+
+
+@dataclass(frozen=True, slots=True)
 class SequencedEvent(Generic[EventT]):
     sequence: int
     event: EventT

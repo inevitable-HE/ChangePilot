@@ -25,6 +25,7 @@ from changepilot.workflow.ports.persistence import (
     EventRepository,
     HasRevision,
     InvalidRevisionError,
+    LegacyApprovalRecord,
     OptimisticLockError,
     PersistenceError,
     RunRepository,
@@ -233,6 +234,27 @@ def _load_approval_rows(connection: Connection) -> dict[tuple[str, str], object]
     rows = connection.execute(select(approval_requests)).mappings().all()
     approvals: dict[tuple[str, str], object] = {}
     for row in rows:
+        if row["status"] == "legacy":
+            payload = json.loads(row["payload_json"])
+            if not isinstance(payload, dict):
+                raise PersistenceError("legacy approval payload_json must contain an object")
+            if (
+                payload.get("run_id") != row["run_id"]
+                or payload.get("approval_key") != row["approval_key"]
+                or "payload" not in payload
+            ):
+                raise PersistenceError(
+                    "legacy approval identity disagrees with payload_json"
+                )
+            approvals[(row["run_id"], row["approval_key"])] = LegacyApprovalRecord(
+                run_id=row["run_id"],
+                approval_key=row["approval_key"],
+                payload=payload["payload"],
+                record_module=row["record_module"],
+                record_qualname=row["record_qualname"],
+                decision=row["decision"],
+            )
+            continue
         approval = _deserialize_generic_record(
             row["record_module"],
             row["record_qualname"],

@@ -9,9 +9,13 @@ from enum import StrEnum
 from typing import Callable
 
 from changepilot.workflow.domain.events import AuditEvent
+from changepilot.workflow.domain.failures import ErrorClass
 from changepilot.workflow.domain.states import RunState, StepState
 from changepilot.workflow.ports.clock import Clock
-from changepilot.workflow.ports.persistence import OptimisticLockError
+from changepilot.workflow.ports.persistence import (
+    LegacyApprovalRecord,
+    OptimisticLockError,
+)
 
 
 def approval_binding_digest(
@@ -270,6 +274,13 @@ class ApprovalService:
             request = uow.approvals.get(run_id, request_id)
             if request is None:
                 raise LookupError(f"unknown approval request {run_id}:{request_id}")
+            if isinstance(request, LegacyApprovalRecord):
+                raise ApprovalDecisionError("legacy_approval")
+            run = uow.runs.get(request.run_id)
+            if run is None:
+                raise LookupError(f"unknown run {request.run_id}")
+            if approval_recovery_required(uow, run):
+                raise ApprovalDecisionError("approval_recovery_required")
             if request.version != expected_version:
                 raise OptimisticLockError(
                     aggregate_type="approval",
@@ -282,9 +293,6 @@ class ApprovalService:
             if request.binding_digest != binding_digest:
                 raise ApprovalDecisionError("binding_mismatch")
 
-            run = uow.runs.get(request.run_id)
-            if run is None:
-                raise LookupError(f"unknown run {request.run_id}")
             if run.state is not RunState.WAITING_APPROVAL:
                 raise ApprovalDecisionError("run_not_waiting_approval")
 
@@ -353,6 +361,24 @@ class ApprovalService:
         if has_compensable_effect:
             return RunState.COMPENSATING
         return RunState.CANCELLED
+
+
+def approval_recovery_required(uow: object, run: object) -> bool:
+    definition = uow.definitions.get(run.definition_id, run.definition_version)
+    if definition is None:
+        raise LookupError(
+            f"unknown definition {run.definition_id}@{run.definition_version}"
+        )
+    if any(
+        uow.steps.get(run.run_id, step.id).state is StepState.RESULT_UNKNOWN
+        for step in definition.steps
+    ):
+        return True
+    return any(
+        getattr(attempt, "status", None) == ErrorClass.RESULT_UNKNOWN.value
+        or getattr(attempt, "error_class", None) == ErrorClass.RESULT_UNKNOWN.value
+        for attempt in uow.attempts.list(run.run_id)
+    )
 
 
 def _text_digest(domain: str, value: str) -> str:

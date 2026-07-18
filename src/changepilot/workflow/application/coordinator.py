@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from changepilot.workflow.application.approvals import (
     ApprovalRequest,
+    approval_recovery_required,
     approval_binding_digest,
     canonical_json_value,
 )
@@ -144,6 +145,16 @@ class Coordinator:
 
         with self._uow_factory() as uow:
             selected_run = uow.runs.get(run_id)
+        if (
+            selected_run is not None
+            and selected_run.state is RunState.WAITING_APPROVAL
+            and self._has_persisted_recovery_work(run_id)
+        ):
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="approval_recovery_required",
+            )
         if selected_run is not None and selected_run.state in _TERMINAL_RUN_STATES:
             return CoordinationReport(
                 run_id=run_id,
@@ -423,6 +434,10 @@ class Coordinator:
         step: StepDefinition,
     ) -> str | None:
         _arguments, binding_digest, _reasons = self._approval_snapshot(definition, step)
+        if self._has_unpersisted_outcome(run_id):
+            return "approval_draining"
+        if self._has_persisted_recovery_work(run_id):
+            return "approval_recovery_required"
         with self._uow_factory() as uow:
             approvals = uow.approvals.list(run_id)
         if any(
@@ -437,10 +452,6 @@ class Coordinator:
             for request in approvals
         ):
             return None
-        if self._has_unpersisted_outcome(run_id):
-            return "approval_draining"
-        if self._has_persisted_running_work(run_id):
-            return "approval_recovery_required"
         return self._establish_approval_barrier(run_id, step.id)
 
     def _has_unpersisted_outcome(self, run_id: str) -> bool:
@@ -449,7 +460,7 @@ class Coordinator:
             for owned in self._owned_futures.values()
         )
 
-    def _has_persisted_running_work(self, run_id: str) -> bool:
+    def _has_persisted_recovery_work(self, run_id: str) -> bool:
         with self._uow_factory() as uow:
             run = uow.runs.get(run_id)
             if run is None:
@@ -459,15 +470,25 @@ class Coordinator:
                 raise LookupError(
                     f"unknown definition {run.definition_id}@{run.definition_version}"
                 )
-            if any(
-                uow.steps.get(run_id, step.id).state is StepState.RUNNING
-                for step in definition.steps
-            ):
-                return True
-            return any(
-                attempt.status == "running"
-                for attempt in uow.attempts.list(run_id)
-            )
+            return self._uow_has_persisted_recovery_work(uow, run, definition)
+
+    @staticmethod
+    def _uow_has_persisted_recovery_work(
+        uow: object,
+        run: object,
+        definition: WorkflowDefinition,
+    ) -> bool:
+        if approval_recovery_required(uow, run):
+            return True
+        if any(
+            uow.steps.get(run.run_id, step.id).state is StepState.RUNNING
+            for step in definition.steps
+        ):
+            return True
+        return any(
+            getattr(attempt, "status", None) == "running"
+            for attempt in uow.attempts.list(run.run_id)
+        )
 
     def _establish_approval_barrier(self, run_id: str, step_id: str) -> str | None:
         occurred_at = self._clock.now()
@@ -480,6 +501,8 @@ class Coordinator:
                 raise LookupError(
                     f"unknown definition {run.definition_id}@{run.definition_version}"
                 )
+            if self._uow_has_persisted_recovery_work(uow, run, definition):
+                return "approval_recovery_required"
             step = next(item for item in definition.steps if item.id == step_id)
             redacted_arguments, binding_digest, risk_reasons = self._approval_snapshot(
                 definition,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -9,8 +8,18 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
 
-from changepilot.workflow.application.approvals import ApprovalRequest
+from changepilot.workflow.application.approvals import (
+    ApprovalDecisionError,
+    ApprovalService,
+)
+from changepilot.workflow.application.coordinator import Coordinator
+from changepilot.workflow.application.tooling import ToolRegistry
 from changepilot.workflow.ports.persistence import PersistenceError
+from tests.support.fakes import (
+    DeterministicIdentifiers,
+    FakeClock,
+    ScriptedTool,
+)
 from tests.contract.uow_contract import _load_module
 
 
@@ -25,6 +34,27 @@ RUNTIME_TABLES = {
     "approval_requests",
     "audit_events",
 }
+
+
+LEGACY_APPROVAL_MODULE = "tests.contract.uow_contract"
+LEGACY_APPROVAL_QUALNAME = "ApprovalRecord"
+
+
+def _legacy_80da0a0_payload(
+    run_id: str,
+    approval_key: str,
+    payload: dict[str, object],
+) -> str:
+    # Frozen from ApprovalRecord and _record_payload at commit 80da0a0.
+    return json.dumps(
+        {
+            "run_id": run_id,
+            "approval_key": approval_key,
+            "payload": payload,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _database_url(path: Path) -> str:
@@ -187,126 +217,201 @@ def test_legacy_0001_upgrade_to_head_and_downgrade_preserves_approval_data(
     config = _alembic_config(database_path)
     command.upgrade(config, "0001_workflow_runtime")
     engine = sqlite.create_sqlite_engine(database_path)
-    request = ApprovalRequest(
-        id="legacy-request",
-        run_id="legacy-run",
-        definition_digest="legacy-definition-digest",
-        step_id="inspect",
-        tool_name="inspect",
-        tool_version="1.0.0",
-        redacted_arguments={"target": "orders"},
-        binding_digest="legacy-binding-digest",
-        risk_reasons=("tool_risk_high",),
-        created_at="2026-07-17T00:00:00+00:00",
-    )
     definition_json = json.dumps(
         {
             "definition_id": "legacy-definition",
             "version": 1,
             "steps": [
                 {
-                    "id": "inspect",
-                    "tool": {"name": "inspect", "version": "1.0.0"},
+                    "id": "protected",
+                    "tool": {"name": "schema.apply", "version": "1.0.0"},
                     "arguments": {"target": "orders"},
+                    "risk": "high",
                 }
             ],
         },
         separators=(",", ":"),
         sort_keys=True,
     )
-    payload_json = json.dumps(asdict(request), separators=(",", ":"), sort_keys=True)
+    legacy_rows = (
+        (
+            "legacy-run-a",
+            "pending-a",
+            LEGACY_APPROVAL_MODULE,
+            LEGACY_APPROVAL_QUALNAME,
+            _legacy_80da0a0_payload(
+                "legacy-run-a",
+                "pending-a",
+                {"reviewers": ["ops"]},
+            ),
+            None,
+        ),
+        (
+            "legacy-run-a",
+            "pending-b",
+            LEGACY_APPROVAL_MODULE,
+            LEGACY_APPROVAL_QUALNAME,
+            _legacy_80da0a0_payload(
+                "legacy-run-a",
+                "pending-b",
+                {"reviewers": ["legal"]},
+            ),
+            None,
+        ),
+        (
+            "legacy-run-a",
+            "decided",
+            LEGACY_APPROVAL_MODULE,
+            LEGACY_APPROVAL_QUALNAME,
+            _legacy_80da0a0_payload(
+                "legacy-run-a",
+                "decided",
+                {"reviewers": ["security"]},
+            ),
+            "approved",
+        ),
+        (
+            "legacy-run-b",
+            "shared-key",
+            LEGACY_APPROVAL_MODULE,
+            LEGACY_APPROVAL_QUALNAME,
+            _legacy_80da0a0_payload(
+                "legacy-run-b",
+                "shared-key",
+                {"reviewers": ["ops"]},
+            ),
+            None,
+        ),
+        (
+            "legacy-run-c",
+            "shared-key",
+            LEGACY_APPROVAL_MODULE,
+            LEGACY_APPROVAL_QUALNAME,
+            _legacy_80da0a0_payload(
+                "legacy-run-c",
+                "shared-key",
+                {"reviewers": ["ops"]},
+            ),
+            "rejected",
+        ),
+    )
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "INSERT INTO workflow_definitions "
             "(definition_id, version, digest, definition_json) VALUES (?, ?, ?, ?)",
             ("legacy-definition", 1, "legacy-definition-digest", definition_json),
         )
-        connection.exec_driver_sql(
-            "INSERT INTO workflow_runs "
-            "(run_id, definition_id, definition_version, definition_digest, state, revision) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "legacy-run",
-                "legacy-definition",
-                1,
-                "legacy-definition-digest",
-                "waiting_approval",
-                1,
-            ),
-        )
+        for run_id in ("legacy-run-a", "legacy-run-b", "legacy-run-c"):
+            connection.exec_driver_sql(
+                "INSERT INTO workflow_runs "
+                "(run_id, definition_id, definition_version, definition_digest, state, revision) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    "legacy-definition",
+                    1,
+                    "legacy-definition-digest",
+                    "running",
+                    1,
+                ),
+            )
         connection.exec_driver_sql(
             "INSERT INTO step_runs (run_id, step_id, state, revision) VALUES (?, ?, ?, ?)",
-            ("legacy-run", "inspect", "ready", 1),
+            ("legacy-run-a", "protected", "ready", 1),
         )
-        connection.exec_driver_sql(
-            "INSERT INTO approval_requests "
-            "(run_id, approval_key, record_module, record_qualname, payload_json, decision) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "legacy-run",
-                "legacy-request",
-                ApprovalRequest.__module__,
-                ApprovalRequest.__qualname__,
-                payload_json,
-                None,
-            ),
-        )
+        for row in legacy_rows:
+            connection.exec_driver_sql(
+                "INSERT INTO approval_requests "
+                "(run_id, approval_key, record_module, record_qualname, payload_json, decision) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                row,
+            )
     engine.dispose()
 
     command.upgrade(config, "head")
     engine = sqlite.create_sqlite_engine(database_path)
     with sqlite.SQLiteUnitOfWork(engine) as uow:
-        assert uow.approvals.get("legacy-run", "legacy-request") == request
+        records = uow.approvals.list("legacy-run-a")
+        assert [record.approval_key for record in records] == [
+            "decided",
+            "pending-a",
+            "pending-b",
+        ]
+        assert all(record.status == "legacy" for record in records)
+        assert all(record.record_module == LEGACY_APPROVAL_MODULE for record in records)
+        assert all(record.record_qualname == LEGACY_APPROVAL_QUALNAME for record in records)
+        assert uow.approvals.pending("legacy-run-a") is None
 
     with engine.connect() as connection:
-        row = connection.exec_driver_sql(
-            "SELECT version, binding_digest, status, decision "
-            "FROM approval_requests WHERE run_id = ? AND approval_key = ?",
-            ("legacy-run", "legacy-request"),
-        ).one()
-        assert row == (0, "legacy-binding-digest", "pending", None)
+        structured_rows = connection.exec_driver_sql(
+            "SELECT run_id, approval_key, version, binding_digest, status, decision "
+            "FROM approval_requests ORDER BY run_id, approval_key"
+        ).all()
+        assert structured_rows == [
+            (run_id, approval_key, 0, None, "legacy", decision)
+            for run_id, approval_key, _module, _qualname, _payload, decision in sorted(
+                legacy_rows,
+                key=lambda row: (row[0], row[1]),
+            )
+        ]
 
     with pytest.raises(IntegrityError):
         with engine.begin() as connection:
             connection.exec_driver_sql(
                 "UPDATE approval_requests SET status = 'corrupt' "
-                "WHERE run_id = 'legacy-run' AND approval_key = 'legacy-request'"
+                "WHERE run_id = 'legacy-run-a' AND approval_key = 'pending-a'"
             )
+
+    clock = FakeClock()
+    service = ApprovalService(
+        uow_factory=lambda: sqlite.SQLiteUnitOfWork(engine),
+        clock=clock,
+    )
+    with pytest.raises(ApprovalDecisionError, match="legacy_approval"):
+        service.decide(
+            "legacy-run-a",
+            "pending-a",
+            "approved",
+            expected_version=0,
+            binding_digest="not-a-current-binding",
+            actor="ops-user",
+            reason="legacy record",
+        )
+
+    tool = ScriptedTool("schema.apply", "1.0.0")
+    coordinator = Coordinator(
+        uow_factory=lambda: sqlite.SQLiteUnitOfWork(engine),
+        tools=ToolRegistry([tool]),
+        clock=clock,
+        identifiers=DeterministicIdentifiers(),
+        run_id_selector=lambda: "legacy-run-a",
+    )
+    try:
+        report = coordinator.run_once()
+        assert report.blocked_reason == "approval_pending"
+        assert tool.calls == []
+        with sqlite.SQLiteUnitOfWork(engine) as uow:
+            current_pending = uow.approvals.pending("legacy-run-a")
+            assert current_pending is not None
+            assert current_pending.status == "pending"
+            assert len(uow.approvals.list("legacy-run-a")) == 4
+    finally:
+        coordinator.close(wait=True)
 
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "UPDATE approval_requests SET version = 1, status = 'approved', "
-            "decision = 'approved' WHERE run_id = 'legacy-run' "
-            "AND approval_key = 'legacy-request'"
+            "decision = 'approved' WHERE run_id = ? AND approval_key = ?",
+            ("legacy-run-a", current_pending.id),
         )
     with pytest.raises(PersistenceError, match="structured approval columns"):
         sqlite.SQLiteUnitOfWork(engine)
     with engine.begin() as connection:
         connection.exec_driver_sql(
-            "UPDATE approval_requests SET version = 0, status = 'pending', decision = NULL "
-            "WHERE run_id = 'legacy-run' AND approval_key = 'legacy-request'"
+            "UPDATE approval_requests SET version = 0, status = 'pending', "
+            "decision = NULL WHERE run_id = ? AND approval_key = ?",
+            ("legacy-run-a", current_pending.id),
         )
-
-    duplicate_payload = json.loads(payload_json)
-    duplicate_payload["id"] = "second-request"
-    with pytest.raises(IntegrityError):
-        with engine.begin() as connection:
-            connection.exec_driver_sql(
-                "INSERT INTO approval_requests "
-                "(run_id, approval_key, record_module, record_qualname, payload_json, "
-                "version, binding_digest, status, decision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    "legacy-run",
-                    "second-request",
-                    ApprovalRequest.__module__,
-                    ApprovalRequest.__qualname__,
-                    json.dumps(duplicate_payload, separators=(",", ":"), sort_keys=True),
-                    0,
-                    "second-binding-digest",
-                    "pending",
-                    None,
-                ),
-            )
     engine.dispose()
 
     command.downgrade(config, "0001_workflow_runtime")
@@ -320,14 +425,15 @@ def test_legacy_0001_upgrade_to_head_and_downgrade_preserves_approval_data(
             row[1] for row in connection.exec_driver_sql("PRAGMA table_info('approval_requests')")
         }
         assert {"version", "binding_digest", "status"}.isdisjoint(columns)
-        legacy_row = connection.exec_driver_sql(
-            "SELECT run_id, approval_key, payload_json, decision FROM approval_requests"
-        ).one()
-        assert legacy_row == (
-            "legacy-run",
-            "legacy-request",
-            payload_json,
-            None,
+        downgraded_rows = connection.exec_driver_sql(
+            "SELECT run_id, approval_key, record_module, record_qualname, "
+            "payload_json, decision FROM approval_requests "
+            "WHERE approval_key IN ('pending-a', 'pending-b', 'decided', 'shared-key') "
+            "ORDER BY run_id, approval_key"
+        ).all()
+        assert downgraded_rows == sorted(
+            legacy_rows,
+            key=lambda row: (row[0], row[1]),
         )
         assert _sqlite_object_sql(
             connection,

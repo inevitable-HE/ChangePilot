@@ -143,14 +143,15 @@ approval_requests = Table(
     ),
     CheckConstraint("version >= 0", name="ck_approval_requests_version"),
     CheckConstraint(
-        "status IN ('pending', 'approved', 'rejected', 'invalidated')",
+        "status IN ('legacy', 'pending', 'approved', 'rejected', 'invalidated')",
         name="ck_approval_requests_status",
     ),
     CheckConstraint(
-        "decision IS NULL OR decision IN ('approved', 'rejected')",
+        "status = 'legacy' OR decision IS NULL OR decision IN ('approved', 'rejected')",
         name="ck_approval_requests_decision",
     ),
     CheckConstraint(
+        "(status = 'legacy' AND version = 0 AND binding_digest IS NULL) OR "
         "(status = 'pending' AND version = 0 AND decision IS NULL) OR "
         "(status IN ('approved', 'rejected') AND version >= 1 AND decision = status) OR "
         "(status = 'invalidated' AND version >= 1 AND decision IS NULL)",
