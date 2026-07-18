@@ -123,6 +123,9 @@ approval_requests = Table(
     Column("record_module", String(), nullable=False),
     Column("record_qualname", String(), nullable=False),
     Column("payload_json", Text(), nullable=False),
+    Column("version", Integer(), nullable=False, server_default=text("0")),
+    Column("binding_digest", String(), nullable=True),
+    Column("status", String(), nullable=False, server_default=text("'pending'")),
     Column("decision", String(), nullable=True),
     Column(
         "created_at",
@@ -178,8 +181,6 @@ audit_events = Table(
 Index(
     "ix_approval_requests_pending_unique",
     approval_requests.c.run_id,
-    approval_requests.c.approval_key,
     unique=True,
-    sqlite_where=approval_requests.c.decision.is_(None),
+    sqlite_where=approval_requests.c.status == "pending",
 )
-

@@ -285,10 +285,13 @@ class _Snapshot:
     new_attempt_keys: set[tuple[str, str, int, str]] = field(default_factory=set)
     dirty_attempt_keys: set[tuple[str, str, int, str]] = field(default_factory=set)
     new_approval_keys: set[tuple[str, str]] = field(default_factory=set)
+    dirty_approval_keys: set[tuple[str, str]] = field(default_factory=set)
     run_expected_revisions: dict[str, int] = field(default_factory=dict)
     step_expected_revisions: dict[tuple[str, str], int] = field(default_factory=dict)
+    approval_expected_versions: dict[tuple[str, str], int] = field(default_factory=dict)
     saved_run_keys: set[str] = field(default_factory=set)
     saved_step_keys: set[tuple[str, str]] = field(default_factory=set)
+    saved_approval_keys: set[tuple[str, str]] = field(default_factory=set)
 
     @classmethod
     def from_connection(cls, connection: Connection) -> "_Snapshot":
@@ -503,6 +506,54 @@ class _SQLiteApprovalRepository(Generic[ApprovalT]):
         approvals.sort(key=lambda approval: approval.approval_key)
         return tuple(approvals)
 
+    def get(self, approval_key: str) -> ApprovalT | None:
+        matches = [
+            approval
+            for (_run_id, key), approval in self._snapshot.approvals.items()
+            if key == approval_key
+        ]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise PersistenceError(f"approval key is not globally unique: {approval_key}")
+        return _clone(matches[0])
+
+    def pending(self, run_id: str) -> ApprovalT | None:
+        matches = [
+            approval
+            for (candidate_run_id, _key), approval in self._snapshot.approvals.items()
+            if candidate_run_id == run_id and approval.status == "pending"
+        ]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise PersistenceError(f"multiple pending approvals for run: {run_id}")
+        return _clone(matches[0])
+
+    def save(self, approval: ApprovalT, *, expected_version: int) -> None:
+        self._ensure_writable()
+        key = _approval_key(approval)
+        expected_new_version = expected_version + 1
+        if approval.version != expected_new_version:
+            raise InvalidRevisionError(
+                aggregate_type="approval",
+                identifier=approval.approval_key,
+                expected_revision=expected_new_version,
+                actual_revision=approval.version,
+            )
+        if key not in self._snapshot.approvals:
+            raise PersistenceError(f"cannot save missing approval: {approval.approval_key}")
+        if key in self._snapshot.saved_approval_keys:
+            raise PersistenceError(
+                "multiple approval saves in a single unit of work are not supported: "
+                f"{approval.approval_key}"
+            )
+        self._snapshot.approvals[key] = _clone(approval)
+        self._snapshot.dirty_approval_keys.add(key)
+        self._snapshot.saved_approval_keys.add(key)
+        if key not in self._snapshot.new_approval_keys:
+            self._snapshot.approval_expected_versions.setdefault(key, expected_version)
+
 
 class _SQLiteEventRepository(EventRepository[EventT]):
     def __init__(self, snapshot: _Snapshot, ensure_writable: Callable[[], None]) -> None:
@@ -686,6 +737,17 @@ class SQLiteUnitOfWork:
             return -1
         return actual_revision
 
+    def _actual_approval_version(self, key: tuple[str, str]) -> int:
+        actual_version = self._connection.execute(
+            select(approval_requests.c.version).where(
+                approval_requests.c.run_id == key[0],
+                approval_requests.c.approval_key == key[1],
+            )
+        ).scalar_one_or_none()
+        if actual_version is None:
+            return -1
+        return actual_version
+
     def _allocate_published_events(
         self,
     ) -> tuple[dict[str, list[SequencedEvent[object]]], dict[str, int]]:
@@ -850,8 +912,41 @@ class SQLiteUnitOfWork:
                     record_module=module_name,
                     record_qualname=qualname,
                     payload_json=_serialize_json(_record_payload(approval)),
+                    version=approval.version,
+                    binding_digest=approval.binding_digest,
+                    status=approval.status,
+                    decision=approval.decision,
                 )
             )
+
+        for key in self._snapshot.dirty_approval_keys - self._snapshot.new_approval_keys:
+            approval = self._snapshot.approvals[key]
+            expected_version = self._snapshot.approval_expected_versions[key]
+            module_name, qualname = _record_identity(approval)
+            result = self._connection.execute(
+                update(approval_requests)
+                .where(
+                    approval_requests.c.run_id == key[0],
+                    approval_requests.c.approval_key == key[1],
+                    approval_requests.c.version == expected_version,
+                )
+                .values(
+                    record_module=module_name,
+                    record_qualname=qualname,
+                    payload_json=_serialize_json(_record_payload(approval)),
+                    version=approval.version,
+                    binding_digest=approval.binding_digest,
+                    status=approval.status,
+                    decision=approval.decision,
+                )
+            )
+            if result.rowcount != 1:
+                raise OptimisticLockError(
+                    aggregate_type="approval",
+                    identifier=key[1],
+                    expected_revision=expected_version,
+                    actual_revision=self._actual_approval_version(key),
+                )
 
         for run_id, entries in published_events.items():
             for entry in entries:
@@ -883,4 +978,9 @@ class SQLiteUnitOfWork:
         message = str(exc.orig).lower()
         if "foreign key constraint failed" in message:
             return PersistenceError("foreign key constraint failed")
+        if "unique constraint failed: approval_requests.run_id" in message:
+            return UniquenessError(
+                record_type="pending_approval",
+                identifier="run_id",
+            )
         return PersistenceError(str(exc.orig))

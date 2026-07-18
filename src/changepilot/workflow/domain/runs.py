@@ -8,7 +8,9 @@ from changepilot.workflow.domain.states import RunState, StepState
 
 
 RUN_TRANSITIONS: dict[RunState, frozenset[RunState]] = {
-    RunState.PENDING: frozenset({RunState.RUNNING, RunState.CANCELLED}),
+    RunState.PENDING: frozenset(
+        {RunState.RUNNING, RunState.WAITING_APPROVAL, RunState.CANCELLED}
+    ),
     RunState.RUNNING: frozenset(
         {
             RunState.CANCELLED,

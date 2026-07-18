@@ -40,6 +40,10 @@ class AttemptRecord(StepScopedRecord, Protocol):
 
 class ApprovalRecord(RunScopedRecord, Protocol):
     approval_key: str
+    version: int
+    status: str
+    binding_digest: str
+    decision: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +152,15 @@ class ApprovalRepository(Protocol[ApprovalT]):
 
     def list(self, run_id: str) -> tuple[ApprovalT, ...]:
         """List approval records visible inside this unit of work."""
+
+    def get(self, approval_key: str) -> ApprovalT | None:
+        """Return an approval by its globally unique request identifier."""
+
+    def pending(self, run_id: str) -> ApprovalT | None:
+        """Return the run's single effective pending approval, if present."""
+
+    def save(self, approval: ApprovalT, *, expected_version: int) -> None:
+        """Stage an approval update guarded by optimistic locking."""
 
 
 class EventRepository(Protocol[EventT]):

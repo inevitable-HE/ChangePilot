@@ -38,6 +38,10 @@ class AttemptRecord:
 class ApprovalRecord:
     run_id: str
     approval_key: str
+    version: int = 0
+    status: str = "pending"
+    binding_digest: str = "binding-1"
+    decision: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -834,3 +838,148 @@ class UnitOfWorkContract:
             persisted_approvals = uow.approvals.list("run-1")
 
         assert persisted_approvals == (first_approval,)
+
+    def test_approval_get_pending_and_versioned_save_round_trip(
+        self,
+        adapter_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+        pending = ApprovalRecord(run_id="run-1", approval_key="approval-1")
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.approvals.add(pending)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            assert uow.approvals.get("approval-1") == pending
+            assert uow.approvals.pending("run-1") == pending
+            decided = replace(
+                pending,
+                version=1,
+                status="approved",
+                decision="approved",
+            )
+            uow.approvals.save(decided, expected_version=0)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            assert uow.approvals.get("approval-1") == decided
+            assert uow.approvals.pending("run-1") is None
+
+    def test_approval_save_rejects_stale_concurrent_version(
+        self,
+        adapter_modules,
+        persistence_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+        pending = ApprovalRecord(run_id="run-1", approval_key="approval-1")
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.approvals.add(pending)
+            uow.commit()
+
+        first = self.make_uow(adapter_modules, store)
+        second = self.make_uow(adapter_modules, store)
+        try:
+            first.__enter__()
+            second.__enter__()
+            approved = replace(
+                first.approvals.get("approval-1"),
+                version=1,
+                status="approved",
+                decision="approved",
+            )
+            rejected = replace(
+                second.approvals.get("approval-1"),
+                version=1,
+                status="rejected",
+                decision="rejected",
+            )
+            first.approvals.save(approved, expected_version=0)
+            second.approvals.save(rejected, expected_version=0)
+            first.commit()
+
+            with pytest.raises(persistence_modules["ports"].OptimisticLockError):
+                second.commit()
+        finally:
+            first.__exit__(None, None, None)
+            second.__exit__(None, None, None)
+
+        with self.make_uow(adapter_modules, store) as uow:
+            assert uow.approvals.get("approval-1").status == "approved"
+
+    def test_each_run_allows_only_one_pending_approval(
+        self,
+        adapter_modules,
+        persistence_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.approvals.add(
+                ApprovalRecord(run_id="run-1", approval_key="approval-1")
+            )
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.approvals.add(
+                ApprovalRecord(
+                    run_id="run-1",
+                    approval_key="approval-2",
+                    binding_digest="binding-2",
+                )
+            )
+            with pytest.raises(persistence_modules["ports"].UniquenessError):
+                uow.commit()
+
+    def test_failed_commit_rolls_back_approval_run_and_event_atomically(
+        self,
+        adapter_modules,
+        persistence_modules,
+        store,
+    ) -> None:
+        _definition, run, _step = self._seed_graph(adapter_modules, store)
+        waiting, waiting_event = run.transition(
+            persistence_modules["states"].RunState.WAITING_APPROVAL,
+            occurred_at=OCCURRED_AT,
+        )
+        pending = ApprovalRecord(run_id="run-1", approval_key="approval-1")
+        duplicate_attempt = AttemptRecord(
+            run_id="run-1",
+            step_id="inspect",
+            attempt_no=1,
+            phase="forward",
+        )
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.runs.save(waiting, expected_revision=run.revision)
+            uow.approvals.add(pending)
+            uow.attempts.add(duplicate_attempt)
+            uow.events.append(waiting_event)
+            uow.commit()
+
+        rejected = replace(
+            pending,
+            version=1,
+            status="rejected",
+            decision="rejected",
+        )
+        cancelled, cancelled_event = waiting.transition(
+            persistence_modules["states"].RunState.CANCELLED,
+            occurred_at=OCCURRED_AT,
+        )
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.approvals.save(rejected, expected_version=0)
+            uow.runs.save(cancelled, expected_revision=waiting.revision)
+            uow.events.append(cancelled_event)
+            uow.attempts.add(duplicate_attempt)
+            with pytest.raises(persistence_modules["ports"].UniquenessError):
+                uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            assert uow.approvals.get("approval-1") == pending
+            assert uow.runs.get("run-1") == waiting
+            assert [entry.event for entry in uow.events.list("run-1")] == [
+                waiting_event
+            ]

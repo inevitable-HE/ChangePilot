@@ -123,3 +123,45 @@ class AuditEvent:
             error_class=error_class,
             summary=summary,
         )
+
+    @classmethod
+    def approval_changed(
+        cls,
+        *,
+        run_id: str,
+        step_id: str,
+        event_type: str,
+        occurred_at: str,
+        previous_state: str,
+        new_state: str,
+        previous_revision: int,
+        revision: int,
+        request_id: str,
+        binding_digest: str,
+        status: str,
+        actor: str | None = None,
+        reason: str | None = None,
+        redacted_arguments: object | None = None,
+    ) -> "AuditEvent":
+        summary = {
+            "request_id": request_id,
+            "binding_digest": binding_digest,
+            "status": status,
+        }
+        if actor is not None:
+            summary["actor"] = actor
+        if reason is not None:
+            summary["reason"] = reason
+        if redacted_arguments is not None:
+            summary["arguments"] = redacted_arguments
+        return cls(
+            run_id=run_id,
+            step_id=step_id,
+            event_type=event_type,
+            occurred_at=occurred_at,
+            previous_state=previous_state,
+            new_state=new_state,
+            previous_revision=previous_revision,
+            revision=revision,
+            summary=summary,
+        )

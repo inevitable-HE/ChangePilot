@@ -44,7 +44,7 @@ ERROR_CLASS_NAMES = (
     "internal_consistency",
 )
 WORKFLOW_ALLOWED = {
-    "pending": frozenset({"running", "cancelled"}),
+    "pending": frozenset({"running", "waiting_approval", "cancelled"}),
     "running": frozenset(
         {
             "cancelled",

@@ -86,8 +86,10 @@ class _Snapshot:
     new_attempt_keys: set[tuple[str, str, int, str]] = field(default_factory=set)
     dirty_attempt_keys: set[tuple[str, str, int, str]] = field(default_factory=set)
     new_approval_keys: set[tuple[str, str]] = field(default_factory=set)
+    dirty_approval_keys: set[tuple[str, str]] = field(default_factory=set)
     run_expected_revisions: dict[str, int] = field(default_factory=dict)
     step_expected_revisions: dict[tuple[str, str], int] = field(default_factory=dict)
+    approval_expected_versions: dict[tuple[str, str], int] = field(default_factory=dict)
 
     @classmethod
     def from_store(cls, store: MemoryStore) -> "_Snapshot":
@@ -306,6 +308,48 @@ class _MemoryApprovalRepository(Generic[ApprovalT]):
         approvals.sort(key=lambda approval: approval.approval_key)
         return tuple(approvals)
 
+    def get(self, approval_key: str) -> ApprovalT | None:
+        matches = [
+            approval
+            for (_run_id, key), approval in self._snapshot.approvals.items()
+            if key == approval_key
+        ]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise PersistenceError(f"approval key is not globally unique: {approval_key}")
+        return _clone(matches[0])
+
+    def pending(self, run_id: str) -> ApprovalT | None:
+        matches = [
+            approval
+            for (candidate_run_id, _key), approval in self._snapshot.approvals.items()
+            if candidate_run_id == run_id and approval.status == "pending"
+        ]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise PersistenceError(f"multiple pending approvals for run: {run_id}")
+        return _clone(matches[0])
+
+    def save(self, approval: ApprovalT, *, expected_version: int) -> None:
+        self._ensure_writable()
+        key = _approval_key(approval)
+        expected_new_version = expected_version + 1
+        if approval.version != expected_new_version:
+            raise InvalidRevisionError(
+                aggregate_type="approval",
+                identifier=approval.approval_key,
+                expected_revision=expected_new_version,
+                actual_revision=approval.version,
+            )
+        if key not in self._snapshot.approvals:
+            raise PersistenceError(f"cannot save missing approval: {approval.approval_key}")
+        self._snapshot.approvals[key] = _clone(approval)
+        self._snapshot.dirty_approval_keys.add(key)
+        if key not in self._snapshot.new_approval_keys:
+            self._snapshot.approval_expected_versions.setdefault(key, expected_version)
+
 
 class _MemoryEventRepository(EventRepository[EventT]):
     def __init__(
@@ -403,7 +447,7 @@ class MemoryUnitOfWork:
         }
         approval_updates = {
             key: _clone(self._snapshot.approvals[key])
-            for key in self._snapshot.new_approval_keys
+            for key in self._snapshot.new_approval_keys | self._snapshot.dirty_approval_keys
         }
 
         for key, value in definition_updates.items():
@@ -479,6 +523,23 @@ class MemoryUnitOfWork:
                     identifier=f"{key[0]}:{key[1]}",
                 )
 
+        approvals = dict(self._store.approvals)
+        for key in self._snapshot.new_approval_keys | self._snapshot.dirty_approval_keys:
+            approvals[key] = self._snapshot.approvals[key]
+        pending_by_run: dict[str, int] = {}
+        for (run_id, _key), approval in approvals.items():
+            if approval.status == "pending":
+                pending_by_run[run_id] = pending_by_run.get(run_id, 0) + 1
+        duplicate_run = next(
+            (run_id for run_id, count in pending_by_run.items() if count > 1),
+            None,
+        )
+        if duplicate_run is not None:
+            raise UniquenessError(
+                record_type="pending_approval",
+                identifier=duplicate_run,
+            )
+
     def _validate_revisions_locked(self) -> None:
         for run_id, expected_revision in self._snapshot.run_expected_revisions.items():
             current = self._store.runs.get(run_id)
@@ -500,4 +561,15 @@ class MemoryUnitOfWork:
                     identifier=f"{key[0]}:{key[1]}",
                     expected_revision=expected_revision,
                     actual_revision=actual_revision,
+                )
+
+        for key, expected_version in self._snapshot.approval_expected_versions.items():
+            current = self._store.approvals.get(key)
+            actual_version = -1 if current is None else current.version
+            if actual_version != expected_version:
+                raise OptimisticLockError(
+                    aggregate_type="approval",
+                    identifier=key[1],
+                    expected_revision=expected_version,
+                    actual_revision=actual_version,
                 )

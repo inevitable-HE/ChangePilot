@@ -7,6 +7,10 @@ from typing import Callable
 
 from pydantic import BaseModel
 
+from changepilot.workflow.application.approvals import (
+    ApprovalRequest,
+    approval_binding_digest,
+)
 from changepilot.workflow.application.scheduler import ready_steps
 from changepilot.workflow.application.tooling import (
     ToolRegistry,
@@ -24,6 +28,7 @@ from changepilot.workflow.ports.tools import (
     Tool,
     ToolExecutionContext,
     ToolExecutionPhase,
+    ToolRisk,
 )
 
 
@@ -164,6 +169,23 @@ class Coordinator:
             for step in ready_steps(definition, step_runs)
             if _step_run(step_runs, step.id).state is StepState.READY
         )
+        protected_step = next(
+            (step for step in ready_candidates if self._requires_approval(step)),
+            None,
+        )
+        if protected_step is not None:
+            approval_block = self._handle_approval_barrier(
+                run_id,
+                definition,
+                protected_step,
+            )
+            if approval_block is not None:
+                return CoordinationReport(
+                    run_id=run_id,
+                    completed=_completed_for_run(completed, run_id),
+                    blocked_reason=approval_block,
+                )
+            ready_candidates = (protected_step,)
         candidates = ready_candidates[:available_capacity]
         if not candidates:
             with self._uow_factory() as uow:
@@ -358,6 +380,185 @@ class Coordinator:
             for owned in self._owned_futures.values()
         )
         return max(0, self._concurrency - active)
+
+    def _requires_approval(self, step: StepDefinition) -> bool:
+        descriptor = self._tools.descriptor_for(step.tool.name, step.tool.version)
+        return step.risk.casefold() == "high" or descriptor.risk is ToolRisk.HIGH
+
+    def _approval_snapshot(
+        self,
+        definition: WorkflowDefinition,
+        step: StepDefinition,
+    ) -> tuple[object, str, tuple[str, ...]]:
+        descriptor = self._tools.descriptor_for(step.tool.name, step.tool.version)
+        redacted_arguments = redact(
+            step.arguments,
+            sensitive_paths=descriptor.sensitive_argument_paths,
+        )
+        binding_digest = approval_binding_digest(
+            definition.digest,
+            step.id,
+            step.tool.name,
+            step.tool.version,
+            redacted_arguments,
+        )
+        risk_reasons = tuple(
+            reason
+            for reason, applies in (
+                ("step_risk_high", step.risk.casefold() == "high"),
+                ("tool_risk_high", descriptor.risk is ToolRisk.HIGH),
+            )
+            if applies
+        )
+        return redacted_arguments, binding_digest, risk_reasons
+
+    def _handle_approval_barrier(
+        self,
+        run_id: str,
+        definition: WorkflowDefinition,
+        step: StepDefinition,
+    ) -> str | None:
+        _arguments, binding_digest, _reasons = self._approval_snapshot(definition, step)
+        with self._uow_factory() as uow:
+            approvals = uow.approvals.list(run_id)
+        if any(
+            request.status == "approved"
+            and request.matches(
+                definition_digest=definition.digest,
+                step_id=step.id,
+                tool_name=step.tool.name,
+                tool_version=step.tool.version,
+                binding_digest=binding_digest,
+            )
+            for request in approvals
+        ):
+            return None
+        if self._has_unpersisted_outcome(run_id):
+            return "approval_draining"
+        return self._establish_approval_barrier(run_id, step.id)
+
+    def _has_unpersisted_outcome(self, run_id: str) -> bool:
+        return any(
+            owned.request.context.run_id == run_id and not owned.outcome_persisted
+            for owned in self._owned_futures.values()
+        )
+
+    def _establish_approval_barrier(self, run_id: str, step_id: str) -> str | None:
+        occurred_at = self._clock.now()
+        with self._uow_factory() as uow:
+            run = uow.runs.get(run_id)
+            if run is None:
+                raise LookupError(f"unknown run {run_id}")
+            definition = uow.definitions.get(run.definition_id, run.definition_version)
+            if definition is None:
+                raise LookupError(
+                    f"unknown definition {run.definition_id}@{run.definition_version}"
+                )
+            step = next(item for item in definition.steps if item.id == step_id)
+            redacted_arguments, binding_digest, risk_reasons = self._approval_snapshot(
+                definition,
+                step,
+            )
+            approvals = uow.approvals.list(run_id)
+            matching_approved = next(
+                (
+                    request
+                    for request in approvals
+                    if request.status == "approved"
+                    and request.matches(
+                        definition_digest=definition.digest,
+                        step_id=step.id,
+                        tool_name=step.tool.name,
+                        tool_version=step.tool.version,
+                        binding_digest=binding_digest,
+                    )
+                ),
+                None,
+            )
+            if matching_approved is not None:
+                return None
+
+            matching_pending = None
+            for request in approvals:
+                if request.status not in {"pending", "approved"}:
+                    continue
+                if request.matches(
+                    definition_digest=definition.digest,
+                    step_id=step.id,
+                    tool_name=step.tool.name,
+                    tool_version=step.tool.version,
+                    binding_digest=binding_digest,
+                ):
+                    if request.status == "pending":
+                        matching_pending = request
+                    continue
+                invalidated = replace(
+                    request,
+                    version=request.version + 1,
+                    status="invalidated",
+                    decided_at=occurred_at,
+                )
+                uow.approvals.save(
+                    invalidated,
+                    expected_version=request.version,
+                )
+                uow.events.append(
+                    AuditEvent.approval_changed(
+                        run_id=run_id,
+                        step_id=request.step_id,
+                        event_type="approval.invalidated",
+                        occurred_at=occurred_at,
+                        previous_state=run.state.value,
+                        new_state=run.state.value,
+                        previous_revision=run.revision,
+                        revision=run.revision,
+                        request_id=request.id,
+                        binding_digest=request.binding_digest,
+                        status="invalidated",
+                    )
+                )
+
+            changed_run = run
+            if run.state is not RunState.WAITING_APPROVAL:
+                changed_run, run_event = run.transition(
+                    RunState.WAITING_APPROVAL,
+                    occurred_at=occurred_at,
+                )
+                uow.runs.save(changed_run, expected_revision=run.revision)
+                uow.events.append(run_event)
+
+            if matching_pending is None:
+                matching_pending = ApprovalRequest(
+                    id=self._identifiers.new(),
+                    run_id=run_id,
+                    definition_digest=definition.digest,
+                    step_id=step.id,
+                    tool_name=step.tool.name,
+                    tool_version=step.tool.version,
+                    redacted_arguments=redacted_arguments,
+                    binding_digest=binding_digest,
+                    risk_reasons=risk_reasons,
+                    created_at=occurred_at,
+                )
+                uow.approvals.add(matching_pending)
+                uow.events.append(
+                    AuditEvent.approval_changed(
+                        run_id=run_id,
+                        step_id=step.id,
+                        event_type="approval.created",
+                        occurred_at=occurred_at,
+                        previous_state=run.state.value,
+                        new_state=changed_run.state.value,
+                        previous_revision=run.revision,
+                        revision=changed_run.revision,
+                        request_id=matching_pending.id,
+                        binding_digest=binding_digest,
+                        status="pending",
+                        redacted_arguments=redacted_arguments,
+                    )
+                )
+            uow.commit()
+        return "approval_pending"
 
     def _collect_outcomes(self) -> tuple[tuple[ExecutionOutcome, ...], bool]:
         now = _parse_timestamp(self._clock.now())

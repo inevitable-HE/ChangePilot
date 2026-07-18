@@ -134,7 +134,7 @@ def test_alembic_upgrade_creates_runtime_schema_and_constraints(tmp_path: Path) 
         )
         assert approval_index_sql == (
             "CREATE UNIQUE INDEX ix_approval_requests_pending_unique "
-            "ON approval_requests (run_id, approval_key) WHERE decision IS NULL"
+            "ON approval_requests (run_id) WHERE status = 'pending'"
         )
 
     engine.dispose()
