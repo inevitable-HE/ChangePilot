@@ -646,7 +646,7 @@ git commit -m "feat: add safe versioned tool contracts"
 - Consumes: state machines, Unit of Work, Tool Registry, stable keys, `Clock`, and `IdentifierFactory`.
 - Produces: `ready_steps(definition, step_runs)`, `ExecutionOutcome`, `CoordinationReport`, and `Coordinator.run_once()`.
 
-- [ ] **Step 1: Write failing deterministic scheduling and retry tests**
+- [x] **Step 1: Write failing deterministic scheduling and retry tests**
 
 ```python
 # tests/unit/test_scheduler.py
@@ -670,13 +670,13 @@ def test_retryable_failure_creates_new_attempt_with_same_key(runtime) -> None:
     assert attempts[0].idempotency_key == attempts[1].idempotency_key
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for deterministic scheduling and coordinator retries**
 
 Run: `python -m pytest tests/unit/test_scheduler.py tests/integration/test_coordinator_retry.py -q`
 
 Expected: FAIL because scheduler and coordinator are absent.
 
-- [ ] **Step 3: Implement stable readiness, bounded executor, two-transaction calls, and classified retries**
+- [x] **Step 3: Implement stable readiness, bounded executor, two-transaction calls, and classified retries**
 
 ```python
 # src/changepilot/workflow/application/coordinator.py
@@ -704,13 +704,13 @@ class CoordinationReport:
 
 `ready_steps()` must sort by topological depth then step ID. `Coordinator` validates concurrency in `1..16`, is the only database writer, writes `running + attempt + start event` before submitting a tool, and persists an `ExecutionOutcome` in a second Unit of Work. Worker functions receive immutable inputs and never receive a repository. Retryable errors enter `retry_wait` with `next_attempt_at`; permanent errors fail immediately; exhausted retries trigger the run failure policy. Use injected `FakeClock` in tests and never sleep.
 
-- [ ] **Step 4: Verify GREEN, concurrency bound, and no-stuck invariant**
+- [x] **Step 4: Verify GREEN, concurrency bound, and no-stuck invariant**
 
 Run: `python -m pytest tests/unit/test_scheduler.py tests/integration/test_coordinator_retry.py -q`
 
 Expected: PASS for stable order, dependency gating, maximum worker capacity, retry timing, permanent failure, and internal consistency failure when a nonterminal run has no ready/in-flight work.
 
-- [ ] **Step 5: Commit Task 6**
+- [x] **Step 5: Commit Task 6**
 
 ```bash
 git add src/changepilot/workflow/application tests/unit/test_scheduler.py tests/integration/test_coordinator_retry.py tests/support

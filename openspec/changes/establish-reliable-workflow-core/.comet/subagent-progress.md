@@ -3,16 +3,20 @@
 - Change: `establish-reliable-workflow-core`
 - Review mode: `standard`
 - TDD mode: `tdd`
-- Current plan task: `Task 5：工具注册、边界 Schema、脱敏与幂等键`
-- Mapped OpenSpec tasks: `1.3`, `3.2`, `3.3`
+- Current plan task: `Task 6：确定性调度器、执行尝试、重试策略与协调器`
+- Mapped OpenSpec tasks: `3.1`, `3.4`
 - Stage: `done`
-- Implementer: `019f7045-6bb5-7742-82c4-16508343888c` (`Fermat`, completed)
-- Implementation commits: `2f3470d` (`feat-add-safe-versioned-tool-contracts`), `8bb5911` (`fix-harden-tool-boundaries-and-ledger`)
-- Changed files: 8 allowed tool boundary/adapter/test files
-- RED evidence: targeted tool tests -> `9 failed`; boundary types and fake adapter absent
-- GREEN evidence: initial targeted -> `9 passed`, full -> `214 passed`; security-fix RED -> 7 failures; security-fix targeted -> `15 passed`; coordinator full -> `220 passed`; `git diff --check` clean except line-ending warnings
+- Implementer: `019f7085-0f70-7f30-874f-15dbf1f770c4` (`Dirac`, completed)
+- Implementation commits: `de6d3cf` (`feat-coordinate-deterministic-workflow-execution`), `82b8181` (`fix-harden-coordinator-concurrency-and-audit`), `02ec4f1` (`fix-close-coordinator-lifecycle-gaps`)
+- Changed files: 10 scheduler/coordinator/persistence contract/adapter/test files
+- RED evidence: missing scheduler/coordinator modules; missing attempt save contract; targeted behavior failures for invalid concurrency, terminalization, backoff, permanent/result-unknown classification, stuck detection, SQLite serialization, and identifier use
+- GREEN evidence: initial targeted -> `17 passed`; initial full -> `239 passed`; first review-fix scheduler/coordinator -> `31 passed`; persistence contracts -> `46 passed`; first review-fix full -> `255 passed`; exceptional fix scheduler/coordinator -> `35 passed`; coordinator independent target+contracts -> `81 passed`; exceptional fix full -> `259 passed`; coordinator full -> `259 passed`; `git diff --check` clean except line-ending warnings
 - Risk review required: yes
-- Risk signals: external tool boundary, secret redaction, idempotency/recovery contract, expected implementation over 200 lines
-- Task review round: 1/1
-- Review status: `APPROVED`; final independent review confirmed all previous Critical/Important findings closed
-- Unresolved findings: none; one non-blocking residual test gap recorded for an explicit missing-`output` ledger line regression case
+- Risk signals: concurrency, shared in-flight state, cross-layer orchestration, expected implementation over 200 lines
+- Task reviewer: `019f70a6-1740-7172-b3ed-d37f6d44caba` (`Maxwell`, completed with changes requested)
+- Fix agent: `019f70cc-e8bc-73a1-a136-a1399cd6534f` (`Anscombe`, completed)
+- Exceptional fix agent: `019f70f2-8808-77e2-a6cf-e663dc156b4f` (`Noether`, completed with bounded concern)
+- Exceptional final reviewer: `019f7412-063a-77e3-b0b0-e2991edecf32` (`Lagrange`, completed)
+- Task review round: exceptional 2/2 authorized by user on 2026-07-18
+- Review status: `APPROVED`; all original and exceptional-round Critical/Important/Minor findings closed
+- Unresolved findings: none; bounded thread-cancellation/result-unknown probe and restart handling remain intentionally assigned to the recovery task
