@@ -7,15 +7,16 @@
 - Mapped OpenSpec tasks: `4.1`
 - Stage: `blocked`
 - Implementer: `019f741b-4669-78a3-840a-5d6b84a14e38` (`Volta`, completed)
-- Implementation commits: `5d1fb2f` (`feat-enforce-durable-approval-barriers`), `1e2a5c3` (`fix-harden-approval-persistence-and-recovery-boundaries`), `64d5416` (`fix-preserve-legacy-approvals-and-unknown-outcomes`)
+- Implementation commits: `5d1fb2f` (`feat-enforce-durable-approval-barriers`), `1e2a5c3` (`fix-harden-approval-persistence-and-recovery-boundaries`), `64d5416` (`fix-preserve-legacy-approvals-and-unknown-outcomes`), `e4ec842` (`fix-close-approval-recovery-guard-gaps`)
 - Changed files: 14 approval/coordinator/domain/persistence/schema/migration/test files
 - RED evidence: missing approval module/service; Memory/SQLite missing approval get/pending/save and uniqueness; sensitive decision reason leaked; existing state/index expectations exposed after contract change
-- GREEN evidence: initial approval target -> `22 passed`; initial full -> `289 passed`; review-fix approval target -> `53 passed`; migration/persistence/coordinator affected -> `249 passed`; coordinator independent affected -> `306 passed`; review-fix full -> `323 passed`; exceptional fix affected -> `152 passed`; independent exceptional-fix affected -> `152 passed`; final independent full rerun -> `331 passed`; `git diff --check` clean except line-ending warnings
+- GREEN evidence: initial approval target -> `22 passed`; initial full -> `289 passed`; review-fix approval target -> `53 passed`; migration/persistence/coordinator affected -> `249 passed`; coordinator independent affected -> `306 passed`; review-fix full -> `323 passed`; exceptional fix affected -> `152 passed`; independent exceptional-fix affected -> `152 passed`; second exceptional full -> `331 passed`; third exceptional affected -> `159 passed`; independent third-exceptional affected -> `159 passed`; independent third-exceptional full -> `338 passed`; `git diff --check` clean except line-ending warnings; frozen `0001` diff clean
 - Risk review required: yes
 - Risk signals: approval/security boundary, optimistic concurrency, schema and persistence contract changes, coordinator integration, expected implementation over 200 lines
-- Task review round: exceptional 2/2 authorized by user on 2026-07-18
-- Task reviewers: `019f7435-be74-72f0-97d4-3d28dee6106b` (`Ampere`, completed with changes requested); `019f74b4-791a-7f62-a408-ca82a4bf2752` (`Dirac`, final exceptional re-review completed with changes requested)
+- Task review round: exceptional 3/3 authorized by user on 2026-07-18
+- Task reviewers: `019f7435-be74-72f0-97d4-3d28dee6106b` (`Ampere`, completed with changes requested); `019f74b4-791a-7f62-a408-ca82a4bf2752` (`Dirac`, second exceptional re-review completed with changes requested); `019f7570-e7f6-7ce0-80ff-37a909879032` (`Tesla`, third exceptional final re-review completed with changes requested)
 - Fix agent: `019f7443-5750-7db1-b487-8ee72c466928` (`Hooke`, completed)
 - Exceptional fix agent: `019f749c-50d9-7aa3-9a2d-901264c501c6` (`Fermat`, completed)
-- Review status: BLOCKED after the user-authorized second fix/re-review round; Task 7 remains unchecked
-- Unresolved findings: 1 Critical (`RESULT_UNKNOWN` is not a global guard before low-risk forward dispatch), 1 Important (supported `SecretRef` is rejected before redaction), and 1 Minor (current approvals do not enforce a non-empty binding digest), recorded in `.superpowers/sdd/task-7-final-rereview-result.md`; real legacy payload migration compatibility is closed
+- Third exceptional fix agents: `019f754e-476e-71c3-9d09-62be957c3666` (`Sagan`, shut down after leaving partial RED tests); `019f755d-bd1f-7010-b680-88796ca949ce` (`Rawls`, blocked by unbound Comet context without code changes); `019f7561-d9bc-7131-8346-f2b831da2d90` (`Aristotle`, completed after explicit change selection)
+- Review status: BLOCKED after the user-authorized third targeted fix/re-review round; Task 7 remains unchecked
+- Unresolved findings: 1 Critical (persisted unknown can be masked by another local in-flight Future, allowing a third forward dispatch), 1 Important (standard serialized SecretRef mappings can still leak provider/name), and 1 Minor (database constraints require non-NULL but not a valid SHA-256 current binding digest), recorded in `.superpowers/sdd/task-7-third-final-rereview-result.md`; all other historical findings remain closed
