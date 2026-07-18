@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     ForeignKeyConstraint,
     Index,
@@ -139,6 +140,21 @@ approval_requests = Table(
         ["workflow_runs.run_id"],
         name="fk_approval_requests_run_id",
         ondelete="CASCADE",
+    ),
+    CheckConstraint("version >= 0", name="ck_approval_requests_version"),
+    CheckConstraint(
+        "status IN ('pending', 'approved', 'rejected', 'invalidated')",
+        name="ck_approval_requests_status",
+    ),
+    CheckConstraint(
+        "decision IS NULL OR decision IN ('approved', 'rejected')",
+        name="ck_approval_requests_decision",
+    ),
+    CheckConstraint(
+        "(status = 'pending' AND version = 0 AND decision IS NULL) OR "
+        "(status IN ('approved', 'rejected') AND version >= 1 AND decision = status) OR "
+        "(status = 'invalidated' AND version >= 1 AND decision IS NULL)",
+        name="ck_approval_requests_state",
     ),
 )
 

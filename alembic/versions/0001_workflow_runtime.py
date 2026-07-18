@@ -113,14 +113,6 @@ def upgrade() -> None:
         sa.Column("record_module", sa.String(), nullable=False),
         sa.Column("record_qualname", sa.String(), nullable=False),
         sa.Column("payload_json", sa.Text(), nullable=False),
-        sa.Column("version", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        sa.Column("binding_digest", sa.String(), nullable=True),
-        sa.Column(
-            "status",
-            sa.String(),
-            nullable=False,
-            server_default=sa.text("'pending'"),
-        ),
         sa.Column("decision", sa.String(), nullable=True),
         sa.Column(
             "created_at",
@@ -173,9 +165,9 @@ def upgrade() -> None:
     op.create_index(
         "ix_approval_requests_pending_unique",
         "approval_requests",
-        ["run_id"],
+        ["run_id", "approval_key"],
         unique=True,
-        sqlite_where=sa.text("status = 'pending'"),
+        sqlite_where=sa.text("decision IS NULL"),
     )
 
 

@@ -153,8 +153,8 @@ class ApprovalRepository(Protocol[ApprovalT]):
     def list(self, run_id: str) -> tuple[ApprovalT, ...]:
         """List approval records visible inside this unit of work."""
 
-    def get(self, approval_key: str) -> ApprovalT | None:
-        """Return an approval by its globally unique request identifier."""
+    def get(self, run_id: str, approval_key: str) -> ApprovalT | None:
+        """Return an approval by its run-scoped request identifier."""
 
     def pending(self, run_id: str) -> ApprovalT | None:
         """Return the run's single effective pending approval, if present."""

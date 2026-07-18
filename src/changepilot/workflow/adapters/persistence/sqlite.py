@@ -231,14 +231,39 @@ def _load_attempt_rows(connection: Connection) -> dict[tuple[str, str, int, str]
 
 def _load_approval_rows(connection: Connection) -> dict[tuple[str, str], object]:
     rows = connection.execute(select(approval_requests)).mappings().all()
-    return {
-        (row["run_id"], row["approval_key"]): _deserialize_generic_record(
+    approvals: dict[tuple[str, str], object] = {}
+    for row in rows:
+        approval = _deserialize_generic_record(
             row["record_module"],
             row["record_qualname"],
             row["payload_json"],
         )
-        for row in rows
-    }
+        structured = {
+            "run_id": row["run_id"],
+            "approval_key": row["approval_key"],
+            "version": row["version"],
+            "binding_digest": row["binding_digest"],
+            "status": row["status"],
+            "decision": row["decision"],
+        }
+        payload = {
+            "run_id": getattr(approval, "run_id", None),
+            "approval_key": getattr(approval, "approval_key", None),
+            "version": getattr(approval, "version", None),
+            "binding_digest": getattr(approval, "binding_digest", None),
+            "status": _enum_value(getattr(approval, "status", None)),
+            "decision": _enum_value(getattr(approval, "decision", None)),
+        }
+        if structured != payload:
+            raise PersistenceError(
+                "structured approval columns disagree with payload_json"
+            )
+        approvals[(row["run_id"], row["approval_key"])] = approval
+    return approvals
+
+
+def _enum_value(value: object) -> object:
+    return value.value if isinstance(value, Enum) else value
 
 
 def _load_event_rows(
@@ -506,17 +531,11 @@ class _SQLiteApprovalRepository(Generic[ApprovalT]):
         approvals.sort(key=lambda approval: approval.approval_key)
         return tuple(approvals)
 
-    def get(self, approval_key: str) -> ApprovalT | None:
-        matches = [
-            approval
-            for (_run_id, key), approval in self._snapshot.approvals.items()
-            if key == approval_key
-        ]
-        if not matches:
+    def get(self, run_id: str, approval_key: str) -> ApprovalT | None:
+        approval = self._snapshot.approvals.get((run_id, approval_key))
+        if approval is None:
             return None
-        if len(matches) > 1:
-            raise PersistenceError(f"approval key is not globally unique: {approval_key}")
-        return _clone(matches[0])
+        return _clone(approval)
 
     def pending(self, run_id: str) -> ApprovalT | None:
         matches = [

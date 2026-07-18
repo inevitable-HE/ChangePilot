@@ -852,7 +852,7 @@ class UnitOfWorkContract:
             uow.commit()
 
         with self.make_uow(adapter_modules, store) as uow:
-            assert uow.approvals.get("approval-1") == pending
+            assert uow.approvals.get("run-1", "approval-1") == pending
             assert uow.approvals.pending("run-1") == pending
             decided = replace(
                 pending,
@@ -864,7 +864,7 @@ class UnitOfWorkContract:
             uow.commit()
 
         with self.make_uow(adapter_modules, store) as uow:
-            assert uow.approvals.get("approval-1") == decided
+            assert uow.approvals.get("run-1", "approval-1") == decided
             assert uow.approvals.pending("run-1") is None
 
     def test_approval_save_rejects_stale_concurrent_version(
@@ -885,13 +885,13 @@ class UnitOfWorkContract:
             first.__enter__()
             second.__enter__()
             approved = replace(
-                first.approvals.get("approval-1"),
+                first.approvals.get("run-1", "approval-1"),
                 version=1,
                 status="approved",
                 decision="approved",
             )
             rejected = replace(
-                second.approvals.get("approval-1"),
+                second.approvals.get("run-1", "approval-1"),
                 version=1,
                 status="rejected",
                 decision="rejected",
@@ -907,7 +907,26 @@ class UnitOfWorkContract:
             second.__exit__(None, None, None)
 
         with self.make_uow(adapter_modules, store) as uow:
-            assert uow.approvals.get("approval-1").status == "approved"
+            assert uow.approvals.get("run-1", "approval-1").status == "approved"
+
+    def test_approval_identity_is_composite_across_runs(
+        self,
+        adapter_modules,
+        store,
+    ) -> None:
+        self._seed_graph(adapter_modules, store)
+        self._seed_run_step_pair(adapter_modules, store, run_id="run-2")
+        first = ApprovalRecord(run_id="run-1", approval_key="shared-request")
+        second = ApprovalRecord(run_id="run-2", approval_key="shared-request")
+
+        with self.make_uow(adapter_modules, store) as uow:
+            uow.approvals.add(first)
+            uow.approvals.add(second)
+            uow.commit()
+
+        with self.make_uow(adapter_modules, store) as uow:
+            assert uow.approvals.get("run-1", "shared-request") == first
+            assert uow.approvals.get("run-2", "shared-request") == second
 
     def test_each_run_allows_only_one_pending_approval(
         self,
@@ -978,7 +997,7 @@ class UnitOfWorkContract:
                 uow.commit()
 
         with self.make_uow(adapter_modules, store) as uow:
-            assert uow.approvals.get("approval-1") == pending
+            assert uow.approvals.get("run-1", "approval-1") == pending
             assert uow.runs.get("run-1") == waiting
             assert [entry.event for entry in uow.events.list("run-1")] == [
                 waiting_event

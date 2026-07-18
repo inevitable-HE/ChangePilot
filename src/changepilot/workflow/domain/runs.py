@@ -26,6 +26,7 @@ RUN_TRANSITIONS: dict[RunState, frozenset[RunState]] = {
             RunState.RUNNING,
             RunState.CANCELLED,
             RunState.COMPENSATING,
+            RunState.MANUAL_INTERVENTION,
         }
     ),
     RunState.COMPENSATING: frozenset(

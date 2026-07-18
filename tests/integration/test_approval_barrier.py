@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 from sqlalchemy import select
@@ -22,7 +23,7 @@ from changepilot.workflow.application.approvals import (
     ApprovalService,
     approval_binding_digest,
 )
-from changepilot.workflow.application.coordinator import Coordinator
+from changepilot.workflow.application.coordinator import Coordinator, StepAttempt
 from changepilot.workflow.application.tooling import ToolRegistry, redact
 from changepilot.workflow.domain.definitions import WorkflowDefinition
 from changepilot.workflow.domain.runs import StepRun, WorkflowRun
@@ -40,6 +41,7 @@ from tests.support.fakes import (
 
 @dataclass
 class Runtime:
+    run_id: str
     coordinator: Coordinator
     approvals: ApprovalService
     uow_factory: object
@@ -51,23 +53,27 @@ class Runtime:
 
     def run(self):
         with self.raw_uow_factory() as uow:
-            return uow.runs.get("run-1")
+            return uow.runs.get(self.run_id)
 
     def step(self, step_id: str):
         with self.raw_uow_factory() as uow:
-            return uow.steps.get("run-1", step_id)
+            return uow.steps.get(self.run_id, step_id)
 
     def pending(self):
         with self.raw_uow_factory() as uow:
-            return uow.approvals.pending("run-1")
+            return uow.approvals.pending(self.run_id)
 
     def approval_records(self):
         with self.raw_uow_factory() as uow:
-            return uow.approvals.list("run-1")
+            return uow.approvals.list(self.run_id)
+
+    def attempts(self, step_id: str):
+        with self.raw_uow_factory() as uow:
+            return uow.attempts.list(self.run_id, step_id=step_id)
 
     def events(self):
         with self.raw_uow_factory() as uow:
-            return tuple(entry.event for entry in uow.events.list("run-1"))
+            return tuple(entry.event for entry in uow.events.list(self.run_id))
 
 
 def _tool(
@@ -84,6 +90,18 @@ def _tool(
     return tool
 
 
+class _NoEffectTool(ScriptedTool):
+    def execute(self, context, arguments):
+        return super().execute(context, arguments).model_copy(
+            update={"effect_applied": False}
+        )
+
+
+class _ProbeForbiddenTool(ScriptedTool):
+    def probe(self, query):
+        raise AssertionError("Task 7 must not probe during approval recovery gating")
+
+
 def _make_runtime(
     *,
     steps: list[dict[str, object]],
@@ -91,6 +109,8 @@ def _make_runtime(
     sqlite_path: Path | None = None,
     existing_store: object | None = None,
     uow_factory_wrapper=None,
+    run_id: str = "run-1",
+    definition_id: str = "workflow-1",
 ) -> Runtime:
     clock = FakeClock()
     registry = ToolRegistry(tools)
@@ -105,31 +125,32 @@ def _make_runtime(
         raw_uow_factory = lambda: MemoryUnitOfWork(store)
 
     with raw_uow_factory() as uow:
-        existing = uow.runs.get("run-1")
+        existing = uow.runs.get(run_id)
     if existing is None:
         definition = WorkflowDefinition.from_mapping(
             {
-                "definition_id": "workflow-1",
+                "definition_id": definition_id,
                 "version": 1,
                 "steps": steps,
             },
             registry,
         )
         run = WorkflowRun.new(
-            run_id="run-1",
+            run_id=run_id,
             definition_id=definition.definition_id,
             definition_version=definition.version,
             definition_digest=definition.digest,
         )
         with raw_uow_factory() as uow:
-            uow.definitions.add(definition)
+            if uow.definitions.get(definition.definition_id, definition.version) is None:
+                uow.definitions.add(definition)
             uow.runs.add(run)
             for step in definition.steps:
                 state = StepState.READY if not step.depends_on else StepState.PENDING
                 revision = 1 if state is StepState.READY else 0
                 uow.steps.add(
                     StepRun(
-                        run_id="run-1",
+                        run_id=run_id,
                         step_id=step.id,
                         state=state,
                         revision=revision,
@@ -148,10 +169,11 @@ def _make_runtime(
         tools=registry,
         clock=clock,
         identifiers=identifiers,
-        run_id_selector=lambda: "run-1",
+        run_id_selector=lambda: run_id,
         concurrency=4,
     )
     return Runtime(
+        run_id=run_id,
         coordinator=coordinator,
         approvals=ApprovalService(uow_factory=uow_factory, clock=clock),
         uow_factory=uow_factory,
@@ -179,6 +201,40 @@ def _protected_step(
     }
 
 
+def _switch_current_definition(runtime: Runtime, changed_component: str) -> None:
+    definition_id = "workflow-2" if changed_component == "definition" else "workflow-1"
+    version = 1 if changed_component == "definition" else 2
+    tool_version = "2.0.0" if changed_component == "tool_version" else "1.0.0"
+    arguments = {"value": "v3"} if changed_component == "arguments" else {"value": "v2"}
+    changed = WorkflowDefinition.from_mapping(
+        {
+            "definition_id": definition_id,
+            "version": version,
+            "steps": [
+                _protected_step(
+                    tool_version=tool_version,
+                    arguments=arguments,
+                )
+            ],
+        },
+        runtime.registry,
+    )
+    with runtime.raw_uow_factory() as uow:
+        run = uow.runs.get(runtime.run_id)
+        uow.definitions.add(changed)
+        uow.runs.save(
+            replace(
+                run,
+                definition_id=changed.definition_id,
+                definition_version=changed.version,
+                definition_digest=changed.digest,
+                revision=run.revision + 1,
+            ),
+            expected_revision=run.revision,
+        )
+        uow.commit()
+
+
 @pytest.mark.parametrize("risk_source", ["step", "tool"])
 def test_any_high_risk_source_creates_barrier_without_calling_tool(
     risk_source: str,
@@ -198,6 +254,27 @@ def test_any_high_risk_source_creates_barrier_without_calling_tool(
         assert runtime.run().state is RunState.WAITING_APPROVAL
         assert runtime.pending().step_id == "protected"
         assert tool.calls == []
+    finally:
+        runtime.coordinator.close(wait=True)
+
+
+def test_approval_snapshot_rejects_non_string_keys_before_redaction() -> None:
+    tool = _tool("schema.apply", risk=ToolRisk.HIGH)
+    runtime = _make_runtime(steps=[_protected_step()], tools=[tool])
+    try:
+        with runtime.raw_uow_factory() as uow:
+            run = uow.runs.get(runtime.run_id)
+            definition = uow.definitions.get(
+                run.definition_id,
+                run.definition_version,
+            )
+        step = replace(
+            definition.steps[0],
+            arguments=MappingProxyType({1: "integer", "1": "string"}),
+        )
+
+        with pytest.raises(ValueError, match="canonical JSON"):
+            runtime.coordinator._approval_snapshot(definition, step)
     finally:
         runtime.coordinator.close(wait=True)
 
@@ -244,6 +321,78 @@ def test_high_risk_barrier_drains_existing_future_before_becoming_waiting() -> N
     finally:
         slow.release.set()
         runtime.coordinator.close(wait=True)
+
+
+@pytest.mark.parametrize("persisted_fact", ["step_run", "step_attempt"])
+def test_fresh_coordinator_requires_recovery_for_persisted_running_work(
+    persisted_fact: str,
+) -> None:
+    store = MemoryStore()
+    inspect = _ProbeForbiddenTool("inspect")
+    protected = _ProbeForbiddenTool("schema.apply")
+    protected.descriptor = protected.descriptor.model_copy(
+        update={"risk": ToolRisk.HIGH}
+    )
+    seeded = _make_runtime(
+        steps=[
+            {
+                "id": "slow",
+                "tool": {"name": "inspect", "version": "1.0.0"},
+                "arguments": {"value": "slow"},
+            },
+            _protected_step(),
+        ],
+        tools=[inspect, protected],
+        existing_store=store,
+    )
+    with seeded.raw_uow_factory() as uow:
+        run = uow.runs.get(seeded.run_id)
+        running_run, run_event = run.transition(
+            RunState.RUNNING,
+            occurred_at=seeded.clock.now(),
+        )
+        uow.runs.save(running_run, expected_revision=run.revision)
+        uow.events.append(run_event)
+        slow_step = uow.steps.get(seeded.run_id, "slow")
+        if persisted_fact == "step_run":
+            uow.steps.save(
+                replace(
+                    slow_step,
+                    state=StepState.RUNNING,
+                    revision=slow_step.revision + 1,
+                ),
+                expected_revision=slow_step.revision,
+            )
+        else:
+            uow.attempts.add(
+                StepAttempt(
+                    run_id=seeded.run_id,
+                    step_id="slow",
+                    attempt_no=1,
+                    phase="forward",
+                    attempt_id="attempt-before-restart",
+                    status="running",
+                    idempotency_key="logical-key",
+                    started_at=seeded.clock.now(),
+                )
+            )
+        uow.commit()
+    seeded.coordinator.close(wait=True)
+
+    restarted = _make_runtime(
+        steps=[],
+        tools=[inspect, protected],
+        existing_store=store,
+    )
+    try:
+        report = restarted.coordinator.run_once()
+
+        assert report.blocked_reason == "approval_recovery_required"
+        assert restarted.run().state is RunState.RUNNING
+        assert restarted.pending() is None
+        assert protected.calls == []
+    finally:
+        restarted.coordinator.close(wait=True)
 
 
 def test_pending_request_survives_sqlite_restart_without_duplicate_or_execution(
@@ -295,6 +444,7 @@ def test_matching_approval_resumes_and_only_dispatches_bound_step() -> None:
         runtime.coordinator.run_once()
         request = runtime.pending()
         decided = runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "approved",
             expected_version=request.version,
@@ -322,6 +472,7 @@ def test_rejection_without_completed_side_effect_cancels_run() -> None:
         request = runtime.pending()
 
         runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "rejected",
             expected_version=0,
@@ -332,6 +483,10 @@ def test_rejection_without_completed_side_effect_cancels_run() -> None:
 
         assert runtime.run().state is RunState.CANCELLED
         assert tool.calls == []
+        rejected_event = next(
+            event for event in runtime.events() if event.event_type == "approval.rejected"
+        )
+        assert rejected_event.summary["reason"]["provided"] is True
     finally:
         runtime.coordinator.close(wait=True)
 
@@ -362,6 +517,7 @@ def test_rejection_after_compensable_success_enters_compensating() -> None:
         request = runtime.pending()
 
         runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "rejected",
             expected_version=0,
@@ -371,7 +527,97 @@ def test_rejection_after_compensable_success_enters_compensating() -> None:
         )
 
         assert runtime.run().state is RunState.COMPENSATING
+        assert runtime.attempts("precheck")[-1].effect_applied is True
         assert compensation.calls == []
+        assert protected.calls == []
+    finally:
+        runtime.coordinator.close(wait=True)
+
+
+def test_rejection_after_success_without_effect_cancels_run() -> None:
+    precheck = _NoEffectTool("precheck")
+    compensation = _tool("precheck.undo")
+    protected = _tool("schema.apply", risk=ToolRisk.HIGH)
+    runtime = _make_runtime(
+        steps=[
+            {
+                "id": "precheck",
+                "tool": {"name": "precheck", "version": "1.0.0"},
+                "arguments": {"value": "checked"},
+                "compensation_tool": {
+                    "name": "precheck.undo",
+                    "version": "1.0.0",
+                },
+            },
+            _protected_step(depends_on=["precheck"]),
+        ],
+        tools=[precheck, compensation, protected],
+    )
+    try:
+        runtime.coordinator.run_once()
+        assert precheck.wait_for_calls(1)
+        runtime.coordinator.run_once()
+        request = runtime.pending()
+
+        runtime.approvals.decide(
+            runtime.run_id,
+            request.id,
+            "rejected",
+            expected_version=0,
+            binding_digest=request.binding_digest,
+            actor="ops-user",
+            reason="no effect observed",
+        )
+
+        attempt = runtime.attempts("precheck")[-1]
+        completed_event = next(
+            event
+            for event in runtime.events()
+            if event.event_type == "tool_attempt_completed"
+        )
+        assert attempt.effect_applied is False
+        assert completed_event.summary["effect_applied"] is False
+        assert runtime.run().state is RunState.CANCELLED
+    finally:
+        runtime.coordinator.close(wait=True)
+
+
+def test_rejection_after_non_compensable_effect_requires_manual_intervention() -> None:
+    precheck = _tool("precheck")
+    protected = _tool("schema.apply", risk=ToolRisk.HIGH)
+    runtime = _make_runtime(
+        steps=[
+            {
+                "id": "precheck",
+                "tool": {"name": "precheck", "version": "1.0.0"},
+                "arguments": {"value": "applied"},
+            },
+            _protected_step(depends_on=["precheck"]),
+        ],
+        tools=[precheck, protected],
+    )
+    try:
+        runtime.coordinator.run_once()
+        assert precheck.wait_for_calls(1)
+        runtime.coordinator.run_once()
+        request = runtime.pending()
+
+        runtime.approvals.decide(
+            runtime.run_id,
+            request.id,
+            "rejected",
+            expected_version=0,
+            binding_digest=request.binding_digest,
+            actor="ops-user",
+            reason="effect cannot be compensated",
+        )
+
+        assert runtime.attempts("precheck")[-1].effect_applied is True
+        assert runtime.run().state is RunState.MANUAL_INTERVENTION
+        rejected_event = next(
+            event for event in runtime.events() if event.event_type == "approval.rejected"
+        )
+        assert rejected_event.new_state == RunState.MANUAL_INTERVENTION.value
         assert protected.calls == []
     finally:
         runtime.coordinator.close(wait=True)
@@ -386,6 +632,7 @@ def test_decision_rejects_stale_mismatched_and_duplicate_requests() -> None:
 
         with pytest.raises(OptimisticLockError):
             runtime.approvals.decide(
+                runtime.run_id,
                 request.id,
                 "approved",
                 expected_version=9,
@@ -395,6 +642,7 @@ def test_decision_rejects_stale_mismatched_and_duplicate_requests() -> None:
             )
         with pytest.raises(ApprovalDecisionError, match="binding_mismatch"):
             runtime.approvals.decide(
+                runtime.run_id,
                 request.id,
                 "approved",
                 expected_version=0,
@@ -404,6 +652,7 @@ def test_decision_rejects_stale_mismatched_and_duplicate_requests() -> None:
             )
 
         runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "approved",
             expected_version=0,
@@ -413,6 +662,7 @@ def test_decision_rejects_stale_mismatched_and_duplicate_requests() -> None:
         )
         with pytest.raises(ApprovalDecisionError, match="already_decided"):
             runtime.approvals.decide(
+                runtime.run_id,
                 request.id,
                 "approved",
                 expected_version=1,
@@ -424,16 +674,179 @@ def test_decision_rejects_stale_mismatched_and_duplicate_requests() -> None:
         runtime.coordinator.close(wait=True)
 
 
+def test_same_request_id_is_decided_independently_for_each_run() -> None:
+    store = MemoryStore()
+    first_tool = _tool("schema.apply", risk=ToolRisk.HIGH)
+    second_tool = _tool("schema.apply", risk=ToolRisk.HIGH)
+    first = _make_runtime(
+        steps=[_protected_step()],
+        tools=[first_tool],
+        existing_store=store,
+        run_id="run-1",
+    )
+    second = _make_runtime(
+        steps=[_protected_step()],
+        tools=[second_tool],
+        existing_store=store,
+        run_id="run-2",
+    )
+    try:
+        first.coordinator.run_once()
+        second.coordinator.run_once()
+        first_request = first.pending()
+        second_request = second.pending()
+        assert first_request.id == second_request.id == "id-1"
+
+        first.approvals.decide(
+            "run-1",
+            first_request.id,
+            "approved",
+            expected_version=0,
+            binding_digest=first_request.binding_digest,
+            actor="first-operator",
+            reason="first approval",
+        )
+
+        assert first.run().state is RunState.RUNNING
+        assert second.run().state is RunState.WAITING_APPROVAL
+        assert second.pending() == second_request
+    finally:
+        first.coordinator.close(wait=True)
+        second.coordinator.close(wait=True)
+
+
+def test_multiple_high_risk_steps_require_distinct_sequential_approvals() -> None:
+    first_tool = _tool("schema.first", risk=ToolRisk.HIGH)
+    second_tool = _tool("schema.second", risk=ToolRisk.HIGH)
+    runtime = _make_runtime(
+        steps=[
+            {
+                "id": "first-protected",
+                "tool": {"name": "schema.first", "version": "1.0.0"},
+                "arguments": {"value": "first"},
+            },
+            {
+                "id": "second-protected",
+                "tool": {"name": "schema.second", "version": "1.0.0"},
+                "arguments": {"value": "second"},
+            },
+        ],
+        tools=[first_tool, second_tool],
+    )
+    try:
+        runtime.coordinator.run_once()
+        first_request = runtime.pending()
+        assert first_request.step_id == "first-protected"
+        runtime.approvals.decide(
+            runtime.run_id,
+            first_request.id,
+            "approved",
+            expected_version=0,
+            binding_digest=first_request.binding_digest,
+            actor="ops-user",
+            reason="approve first",
+        )
+        runtime.coordinator.run_once()
+        assert first_tool.wait_for_calls(1)
+
+        second_request = None
+        for _ in range(10):
+            runtime.coordinator.run_once()
+            second_request = runtime.pending()
+            if second_request is not None:
+                break
+        assert second_request is not None
+        assert second_request.id != first_request.id
+        assert second_request.step_id == "second-protected"
+        assert second_tool.calls == []
+
+        runtime.approvals.decide(
+            runtime.run_id,
+            second_request.id,
+            "approved",
+            expected_version=0,
+            binding_digest=second_request.binding_digest,
+            actor="ops-user",
+            reason="approve second",
+        )
+        runtime.coordinator.run_once()
+        assert second_tool.wait_for_calls(1)
+    finally:
+        runtime.coordinator.close(wait=True)
+
+
+def test_selector_barrier_ignores_running_work_owned_by_another_run() -> None:
+    store = MemoryStore()
+    slow = BlockingTool("inspect")
+    protected = _tool("schema.apply", risk=ToolRisk.HIGH)
+    first = _make_runtime(
+        steps=[
+            {
+                "id": "slow",
+                "tool": {"name": "inspect", "version": "1.0.0"},
+                "arguments": {"value": "slow"},
+            }
+        ],
+        tools=[slow],
+        existing_store=store,
+        run_id="run-1",
+        definition_id="workflow-1",
+    )
+    second = _make_runtime(
+        steps=[_protected_step()],
+        tools=[protected],
+        existing_store=store,
+        run_id="run-2",
+        definition_id="workflow-2",
+    )
+    first.coordinator.close(wait=True)
+    second.coordinator.close(wait=True)
+    selected = {"run_id": "run-1"}
+    coordinator = Coordinator(
+        uow_factory=first.raw_uow_factory,
+        tools=ToolRegistry([slow, protected]),
+        clock=first.clock,
+        identifiers=DeterministicIdentifiers(),
+        run_id_selector=lambda: selected["run_id"],
+        concurrency=2,
+    )
+    try:
+        first_report = coordinator.run_once()
+        assert first_report.dispatched == ("slow",)
+        assert slow.started.wait(timeout=1)
+
+        selected["run_id"] = "run-2"
+        second_report = coordinator.run_once()
+        with first.raw_uow_factory() as uow:
+            first_run = uow.runs.get("run-1")
+            second_run = uow.runs.get("run-2")
+            second_pending = uow.approvals.pending("run-2")
+
+        assert second_report.blocked_reason == "approval_pending"
+        assert first_run.state is RunState.RUNNING
+        assert second_run.state is RunState.WAITING_APPROVAL
+        assert second_pending.step_id == "protected"
+        assert protected.calls == []
+    finally:
+        slow.release.set()
+        coordinator.close(wait=True)
+
+
 @pytest.mark.parametrize("changed_component", ["arguments", "tool_version", "definition"])
 def test_changed_binding_invalidates_old_approval_and_creates_new_pending(
     changed_component: str,
 ) -> None:
     tool = _tool("schema.apply", risk=ToolRisk.HIGH)
-    runtime = _make_runtime(steps=[_protected_step()], tools=[tool])
+    upgraded_tool = _tool("schema.apply", risk=ToolRisk.HIGH, version="2.0.0")
+    runtime = _make_runtime(
+        steps=[_protected_step()],
+        tools=[tool, upgraded_tool],
+    )
     try:
         runtime.coordinator.run_once()
         request = runtime.pending()
         approved = runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "approved",
             expected_version=0,
@@ -441,35 +854,21 @@ def test_changed_binding_invalidates_old_approval_and_creates_new_pending(
             actor="ops-user",
             reason="approved old snapshot",
         )
-        old_values = {
-            "plan_digest": request.definition_digest,
-            "step_id": request.step_id,
-            "tool_name": request.tool_name,
-            "tool_version": request.tool_version,
-            "redacted_arguments": request.redacted_arguments,
-        }
-        if changed_component == "arguments":
-            old_values["redacted_arguments"] = {"value": "v1"}
-        elif changed_component == "tool_version":
-            old_values["tool_version"] = "0.9.0"
-        else:
-            old_values["plan_digest"] = "old-definition-digest"
-        stale = replace(
-            approved,
-            binding_digest=approval_binding_digest(**old_values),
-            version=approved.version + 1,
-        )
-        with runtime.raw_uow_factory() as uow:
-            uow.approvals.save(stale, expected_version=approved.version)
-            uow.commit()
+        _switch_current_definition(runtime, changed_component)
 
         report = runtime.coordinator.run_once()
         records = runtime.approval_records()
         assert report.blocked_reason == "approval_pending"
         assert len(records) == 2
         assert records[0].status == "invalidated"
-        assert runtime.pending().binding_digest == request.binding_digest
+        assert runtime.pending().binding_digest != request.binding_digest
         assert runtime.pending().id != request.id
+        if changed_component == "arguments":
+            assert runtime.pending().redacted_arguments == {"value": "v3"}
+        elif changed_component == "tool_version":
+            assert runtime.pending().tool_version == "2.0.0"
+        else:
+            assert runtime.pending().definition_digest != request.definition_digest
         assert runtime.run().state is RunState.WAITING_APPROVAL
         assert tool.calls == []
     finally:
@@ -489,6 +888,7 @@ def test_sqlite_replaces_invalid_approval_with_new_pending_in_one_transaction(
         runtime.coordinator.run_once()
         request = runtime.pending()
         approved = runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "approved",
             expected_version=0,
@@ -531,6 +931,7 @@ def test_approval_create_decide_and_invalidate_append_structured_events() -> Non
         runtime.coordinator.run_once()
         request = runtime.pending()
         approved = runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "approved",
             expected_version=0,
@@ -564,8 +965,11 @@ def test_approval_create_decide_and_invalidate_append_structured_events() -> Non
             "status": "pending",
             "arguments": {"value": "v2"},
         }
-        assert approval_events[1].summary["actor"] == "ops-user"
-        assert approval_events[1].summary["reason"] == "approved snapshot"
+        assert approval_events[1].summary["actor"]["algorithm"] == "sha256"
+        assert len(approval_events[1].summary["actor"]["digest"]) == 64
+        assert approval_events[1].summary["reason"]["provided"] is True
+        assert approval_events[1].summary["reason"]["algorithm"] == "sha256"
+        assert len(approval_events[1].summary["reason"]["digest"]) == 64
         assert approval_events[2].summary["status"] == "invalidated"
         assert approval_events[3].summary["request_id"] != request.id
     finally:
@@ -599,6 +1003,15 @@ def test_sqlite_approval_and_audit_payloads_never_store_raw_sensitive_value(
 ) -> None:
     database_path = tmp_path / "approval-secrets.db"
     secret = "prod-secret-key=raw-secret-value"
+    actor = (
+        "ops-user\nAuthorization: Bearer bearer-actor-secret\n"
+        '{"session":"json-actor-secret"}'
+    )
+    reason = (
+        "emergency review\n"
+        '{"credential":"json-reason-secret"}\n'
+        "UNLABELED-MULTILINE-SECRET"
+    )
     tool = _tool(
         "schema.apply",
         risk=ToolRisk.HIGH,
@@ -613,14 +1026,21 @@ def test_sqlite_approval_and_audit_payloads_never_store_raw_sensitive_value(
         runtime.coordinator.run_once()
         request = runtime.pending()
         assert request.redacted_arguments == {"value": "[REDACTED]"}
-        runtime.approvals.decide(
+        decided = runtime.approvals.decide(
+            runtime.run_id,
             request.id,
             "approved",
             expected_version=0,
             binding_digest=request.binding_digest,
-            actor="ops-user",
-            reason="emergency token=decision-secret-value",
+            actor=actor,
+            reason=reason,
         )
+
+        assert decided.actor.algorithm == "sha256"
+        assert len(decided.actor.digest) == 64
+        assert decided.reason.provided is True
+        assert decided.reason.algorithm == "sha256"
+        assert len(decided.reason.digest) == 64
 
         with runtime.store.connect() as connection:
             stored = [
@@ -632,7 +1052,22 @@ def test_sqlite_approval_and_audit_payloads_never_store_raw_sensitive_value(
         assert secret not in "\n".join(stored)
         assert "prod-secret-key" not in "\n".join(stored)
         assert "raw-secret-value" not in "\n".join(stored)
-        assert "decision-secret-value" not in "\n".join(stored)
+        persisted_text = "\n".join(stored)
+        for raw_value in (secret, actor, reason, "bearer-actor-secret", "json-actor-secret", "json-reason-secret", "UNLABELED-MULTILINE-SECRET"):
+            assert raw_value not in persisted_text
+
+        runtime.coordinator.close(wait=True)
+        runtime.store.dispose()
+        database_bytes = database_path.read_bytes()
+        for raw_value in (
+            actor,
+            reason,
+            "bearer-actor-secret",
+            "json-actor-secret",
+            "json-reason-secret",
+            "UNLABELED-MULTILINE-SECRET",
+        ):
+            assert raw_value.encode("utf-8") not in database_bytes
     finally:
         runtime.coordinator.close(wait=True)
         runtime.store.dispose()

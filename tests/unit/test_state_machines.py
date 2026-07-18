@@ -55,7 +55,9 @@ WORKFLOW_ALLOWED = {
             "manual_intervention",
         }
     ),
-    "waiting_approval": frozenset({"running", "cancelled", "compensating"}),
+    "waiting_approval": frozenset(
+        {"running", "cancelled", "compensating", "manual_intervention"}
+    ),
     "compensating": frozenset({"compensated", "manual_intervention"}),
 }
 STEP_ALLOWED = {

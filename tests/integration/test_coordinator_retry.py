@@ -813,6 +813,7 @@ def test_attempt_started_and_completed_events_are_atomic_and_structured() -> Non
     assert attempt_events[1].error_class is None
     assert attempt_events[1].summary == {
         "status": "success",
+        "effect_applied": True,
         "result": {"value": "checked"},
     }
     assert runtime.uow_factory.commits == 2

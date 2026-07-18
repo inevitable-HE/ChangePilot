@@ -308,17 +308,11 @@ class _MemoryApprovalRepository(Generic[ApprovalT]):
         approvals.sort(key=lambda approval: approval.approval_key)
         return tuple(approvals)
 
-    def get(self, approval_key: str) -> ApprovalT | None:
-        matches = [
-            approval
-            for (_run_id, key), approval in self._snapshot.approvals.items()
-            if key == approval_key
-        ]
-        if not matches:
+    def get(self, run_id: str, approval_key: str) -> ApprovalT | None:
+        approval = self._snapshot.approvals.get((run_id, approval_key))
+        if approval is None:
             return None
-        if len(matches) > 1:
-            raise PersistenceError(f"approval key is not globally unique: {approval_key}")
-        return _clone(matches[0])
+        return _clone(approval)
 
     def pending(self, run_id: str) -> ApprovalT | None:
         matches = [

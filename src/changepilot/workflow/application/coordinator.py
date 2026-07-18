@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from changepilot.workflow.application.approvals import (
     ApprovalRequest,
     approval_binding_digest,
+    canonical_json_value,
 )
 from changepilot.workflow.application.scheduler import ready_steps
 from changepilot.workflow.application.tooling import (
@@ -38,6 +39,7 @@ class ExecutionOutcome:
     step_id: str
     attempt_no: int
     status: str
+    effect_applied: bool = False
     result: object | None = None
     error_class: str | None = None
     error_message: str | None = None
@@ -65,6 +67,7 @@ class StepAttempt:
     status: str
     idempotency_key: str
     started_at: str
+    effect_applied: bool = False
     completed_at: str | None = None
     next_attempt_at: str | None = None
     result: object | None = None
@@ -391,8 +394,9 @@ class Coordinator:
         step: StepDefinition,
     ) -> tuple[object, str, tuple[str, ...]]:
         descriptor = self._tools.descriptor_for(step.tool.name, step.tool.version)
+        canonical_arguments = canonical_json_value(step.arguments)
         redacted_arguments = redact(
-            step.arguments,
+            canonical_arguments,
             sensitive_paths=descriptor.sensitive_argument_paths,
         )
         binding_digest = approval_binding_digest(
@@ -435,6 +439,8 @@ class Coordinator:
             return None
         if self._has_unpersisted_outcome(run_id):
             return "approval_draining"
+        if self._has_persisted_running_work(run_id):
+            return "approval_recovery_required"
         return self._establish_approval_barrier(run_id, step.id)
 
     def _has_unpersisted_outcome(self, run_id: str) -> bool:
@@ -442,6 +448,26 @@ class Coordinator:
             owned.request.context.run_id == run_id and not owned.outcome_persisted
             for owned in self._owned_futures.values()
         )
+
+    def _has_persisted_running_work(self, run_id: str) -> bool:
+        with self._uow_factory() as uow:
+            run = uow.runs.get(run_id)
+            if run is None:
+                raise LookupError(f"unknown run {run_id}")
+            definition = uow.definitions.get(run.definition_id, run.definition_version)
+            if definition is None:
+                raise LookupError(
+                    f"unknown definition {run.definition_id}@{run.definition_version}"
+                )
+            if any(
+                uow.steps.get(run_id, step.id).state is StepState.RUNNING
+                for step in definition.steps
+            ):
+                return True
+            return any(
+                attempt.status == "running"
+                for attempt in uow.attempts.list(run_id)
+            )
 
     def _establish_approval_barrier(self, run_id: str, step_id: str) -> str | None:
         occurred_at = self._clock.now()
@@ -496,6 +522,9 @@ class Coordinator:
                     request,
                     version=request.version + 1,
                     status="invalidated",
+                    decision=None,
+                    actor=None,
+                    reason=None,
                     decided_at=occurred_at,
                 )
                 uow.approvals.save(
@@ -754,6 +783,7 @@ class Coordinator:
             completed_attempt = replace(
                 attempt,
                 status=outcome.status,
+                effect_applied=outcome.effect_applied,
                 completed_at=completed_at,
                 next_attempt_at=next_attempt_at,
                 result=redacted_result,
@@ -822,6 +852,7 @@ def _execute_request(request: _ExecutionRequest) -> ExecutionOutcome:
         step_id=context.step_id,
         attempt_no=context.attempt_number,
         status="success",
+        effect_applied=result.effect_applied,
         result=result.output,
     )
 
@@ -876,7 +907,11 @@ def _consume_late_future(future: Future[ExecutionOutcome]) -> None:
 
 def _outcome_summary(outcome: ExecutionOutcome, redacted_result: object) -> object:
     if outcome.status == "success":
-        return {"status": "success", "result": redacted_result}
+        return {
+            "status": "success",
+            "effect_applied": outcome.effect_applied,
+            "result": redacted_result,
+        }
     return {"status": "failed", "error_class": outcome.error_class}
 
 
