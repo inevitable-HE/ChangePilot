@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -37,6 +37,7 @@ from changepilot.workflow.ports.persistence import (
     UnitOfWorkStateError,
     UniquenessError,
 )
+from changepilot.workflow.ports.tools import SecretRef, UnavailableSecretRef
 
 from .schema import (
     approval_requests,
@@ -54,6 +55,10 @@ StepT = TypeVar("StepT", bound=StepRecord)
 AttemptT = TypeVar("AttemptT", bound=AttemptRecord)
 ApprovalT = TypeVar("ApprovalT", bound=ApprovalRecord)
 EventT = TypeVar("EventT", bound=RunScopedRecord)
+
+
+_SECRET_REFERENCE_PATHS_KEY = "_changepilot_unavailable_secret_paths"
+_SECRET_REFERENCE_PLACEHOLDER = "[REDACTED]"
 
 
 def _clone(value: Any):
@@ -93,15 +98,9 @@ def _resolve_qualname(module_name: str, qualname: str):
 
 def _freeze_value(value: object) -> object:
     if isinstance(value, MappingProxyType):
-        frozen = {key: _freeze_value(item) for key, item in value.items()}
-        if set(frozen) == {"provider", "name"}:
-            return {"provider": "[REDACTED]", "name": "[REDACTED]"}
-        return frozen
+        return {key: _freeze_value(item) for key, item in value.items()}
     if isinstance(value, dict):
-        frozen = {key: _freeze_value(item) for key, item in value.items()}
-        if set(frozen) == {"provider", "name"}:
-            return {"provider": "[REDACTED]", "name": "[REDACTED]"}
-        return frozen
+        return {key: _freeze_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_freeze_value(item) for item in value]
     if isinstance(value, tuple):
@@ -140,41 +139,155 @@ class _PassthroughToolCatalog:
     ) -> None:
         return None
 
+    def coerce_arguments(
+        self,
+        name: str,
+        version: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        return dict(arguments)
+
 
 def _definition_to_mapping(definition: WorkflowDefinition) -> dict[str, object]:
+    steps: list[dict[str, object]] = []
+    for step in definition.steps:
+        arguments, secret_paths = _serialize_definition_arguments(step.arguments)
+        serialized_step = {
+            "id": step.id,
+            "tool": {
+                "name": step.tool.name,
+                "version": step.tool.version,
+            },
+            "arguments": arguments,
+            "depends_on": list(step.depends_on),
+            "risk": step.risk,
+            "retry": {
+                "max_attempts": step.retry.max_attempts,
+                "initial_backoff_seconds": step.retry.initial_backoff_seconds,
+            },
+            "compensation_tool": (
+                None
+                if step.compensation_tool is None
+                else {
+                    "name": step.compensation_tool.name,
+                    "version": step.compensation_tool.version,
+                }
+            ),
+        }
+        if secret_paths:
+            serialized_step[_SECRET_REFERENCE_PATHS_KEY] = [list(path) for path in secret_paths]
+        steps.append(serialized_step)
     return {
         "definition_id": definition.definition_id,
         "version": definition.version,
-        "steps": [
-            {
-                "id": step.id,
-                "tool": {
-                    "name": step.tool.name,
-                    "version": step.tool.version,
-                },
-                "arguments": _freeze_value(step.arguments),
-                "depends_on": list(step.depends_on),
-                "risk": step.risk,
-                "retry": {
-                    "max_attempts": step.retry.max_attempts,
-                    "initial_backoff_seconds": step.retry.initial_backoff_seconds,
-                },
-                "compensation_tool": (
-                    None
-                    if step.compensation_tool is None
-                    else {
-                        "name": step.compensation_tool.name,
-                        "version": step.compensation_tool.version,
-                    }
-                ),
-            }
-            for step in definition.steps
-        ],
+        "steps": steps,
     }
 
 
 def _definition_from_mapping(payload: dict[str, object]) -> WorkflowDefinition:
-    return WorkflowDefinition.from_mapping(payload, _PassthroughToolCatalog())
+    definition = WorkflowDefinition.from_mapping(payload, _PassthroughToolCatalog())
+    raw_steps = payload.get("steps")
+    if not isinstance(raw_steps, list):
+        raise PersistenceError("persisted definition steps must be a list")
+    paths_by_step = {
+        raw_step.get("id"): _parse_secret_reference_paths(raw_step)
+        for raw_step in raw_steps
+        if isinstance(raw_step, dict)
+    }
+    restored_steps = tuple(
+        replace(
+            step,
+            arguments=_restore_unavailable_secret_references(
+                step.arguments,
+                paths_by_step.get(step.id, ()),
+            ),
+        )
+        for step in definition.steps
+    )
+    return replace(definition, steps=restored_steps)
+
+
+def _serialize_definition_arguments(
+    value: object,
+    path: tuple[str | int, ...] = (),
+) -> tuple[object, tuple[tuple[str | int, ...], ...]]:
+    if isinstance(value, (SecretRef, UnavailableSecretRef)):
+        return _SECRET_REFERENCE_PLACEHOLDER, (path,)
+    if isinstance(value, MappingProxyType):
+        serialized: dict[str, object] = {}
+        paths: list[tuple[str | int, ...]] = []
+        for key, item in value.items():
+            encoded, item_paths = _serialize_definition_arguments(item, path + (key,))
+            serialized[key] = encoded
+            paths.extend(item_paths)
+        return serialized, tuple(paths)
+    if isinstance(value, dict):
+        serialized = {}
+        paths = []
+        for key, item in value.items():
+            encoded, item_paths = _serialize_definition_arguments(item, path + (key,))
+            serialized[key] = encoded
+            paths.extend(item_paths)
+        return serialized, tuple(paths)
+    if isinstance(value, (list, tuple)):
+        serialized_items: list[object] = []
+        paths = []
+        for index, item in enumerate(value):
+            encoded, item_paths = _serialize_definition_arguments(item, path + (index,))
+            serialized_items.append(encoded)
+            paths.extend(item_paths)
+        return serialized_items, tuple(paths)
+    return value, ()
+
+
+def _parse_secret_reference_paths(raw_step: dict[str, object]) -> tuple[tuple[str | int, ...], ...]:
+    raw_paths = raw_step.get(_SECRET_REFERENCE_PATHS_KEY, [])
+    if not isinstance(raw_paths, list):
+        raise PersistenceError("persisted secret reference paths must be a list")
+    paths: list[tuple[str | int, ...]] = []
+    for raw_path in raw_paths:
+        if (
+            not isinstance(raw_path, list)
+            or not raw_path
+            or any(
+                not isinstance(segment, (str, int)) or isinstance(segment, bool)
+                for segment in raw_path
+            )
+        ):
+            raise PersistenceError("persisted secret reference path is invalid")
+        paths.append(tuple(raw_path))
+    return tuple(paths)
+
+
+def _restore_unavailable_secret_references(
+    value: object,
+    paths: tuple[tuple[str | int, ...], ...],
+) -> MappingProxyType:
+    target_paths = set(paths)
+
+    def restore(current: object, current_path: tuple[str | int, ...]) -> object:
+        if current_path in target_paths:
+            if current != _SECRET_REFERENCE_PLACEHOLDER:
+                raise PersistenceError("persisted secret reference placeholder is invalid")
+            return UnavailableSecretRef()
+        if isinstance(current, MappingProxyType):
+            return MappingProxyType(
+                {
+                    key: restore(item, current_path + (key,))
+                    for key, item in current.items()
+                }
+            )
+        if isinstance(current, tuple):
+            return tuple(
+                restore(item, current_path + (index,))
+                for index, item in enumerate(current)
+            )
+        return current
+
+    restored = restore(value, ())
+    if not isinstance(restored, MappingProxyType):
+        raise PersistenceError("persisted definition arguments must be a mapping")
+    return restored
 
 
 def _serialize_json(value: object) -> str:

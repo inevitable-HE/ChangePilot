@@ -12,6 +12,7 @@ from changepilot.workflow.ports.tools import (
     Tool,
     ToolDescriptor,
     ToolExecutionPhase,
+    UnavailableSecretRef,
     normalize_sensitive_path,
 )
 
@@ -80,6 +81,8 @@ class ToolRegistry:
     ) -> BaseModel:
         descriptor = self.descriptor_for(name, version)
         payload = self._require_mapping(arguments, label="arguments")
+        if contains_unavailable_secret_ref(payload):
+            raise ValueError("secret reference unavailable after SQLite reload")
         self._reject_unexpected_fields(payload, descriptor.input_model, label="arguments")
         return self._validate_model(descriptor.input_model, payload, label="arguments")
 
@@ -253,6 +256,26 @@ def _redact_exception_argument(
     if isinstance(value, (str, bytes, bytearray)):
         return REDACTED
     return _redact_value(value, path=path, sensitive_paths=sensitive_paths)
+
+
+def contains_unavailable_secret_ref(value: object) -> bool:
+    if isinstance(value, UnavailableSecretRef):
+        return True
+    if isinstance(value, BaseModel):
+        for field_name in value.__class__.model_fields:
+            if contains_unavailable_secret_ref(getattr(value, field_name)):
+                return True
+        return False
+    if isinstance(value, Mapping):
+        for item in value.values():
+            if contains_unavailable_secret_ref(item):
+                return True
+        return False
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if contains_unavailable_secret_ref(item):
+                return True
+    return False
 
 
 def _require_identity(value: str, *, field_name: str) -> str:

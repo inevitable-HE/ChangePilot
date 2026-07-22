@@ -157,7 +157,15 @@ def test_approval_request_normalizes_status_to_strong_enum() -> None:
 
 @pytest.mark.parametrize(
     "binding_digest",
-    [None, "", "a" * 63, "g" * 64],
+    [
+        None,
+        "",
+        "a" * 63,
+        "g" * 64,
+        "+" + "a" * 63,
+        "a_" + "b" * 62,
+        " " + "a" * 62 + " ",
+    ],
 )
 def test_current_approval_request_requires_a_sha256_binding_digest(
     binding_digest: object,

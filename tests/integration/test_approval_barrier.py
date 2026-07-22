@@ -30,7 +30,7 @@ from changepilot.workflow.domain.definitions import WorkflowDefinition
 from changepilot.workflow.domain.runs import StepRun, WorkflowRun
 from changepilot.workflow.domain.states import RunState, StepState
 from changepilot.workflow.ports.persistence import OptimisticLockError
-from changepilot.workflow.ports.tools import SecretRef, ToolRisk
+from changepilot.workflow.ports.tools import SecretRef, ToolRisk, UnavailableSecretRef
 from tests.support.fakes import (
     BlockingTool,
     DeterministicIdentifiers,
@@ -107,6 +107,19 @@ class _SecretReferenceArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     credential: SecretRef
+
+
+class _ProviderNameResource(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    provider: str
+    name: str
+
+
+class _ProviderNameArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    resource: _ProviderNameResource
 
 
 def _make_runtime(
@@ -331,14 +344,116 @@ def test_definition_secret_reference_mapping_is_redacted_before_sqlite_approval_
         assert secret_provider not in persisted_payloads
         assert secret_name not in persisted_payloads
 
+    finally:
         runtime.coordinator.close(wait=True)
         runtime.store.dispose()
         database_bytes = database_path.read_bytes()
         assert secret_provider.encode("utf-8") not in database_bytes
         assert secret_name.encode("utf-8") not in database_bytes
+
+@pytest.mark.parametrize("sqlite_path", [None, "provider-name.db"])
+def test_provider_name_business_object_round_trips_without_digest_collision(
+    tmp_path: Path,
+    sqlite_path: str | None,
+) -> None:
+    database_path = None if sqlite_path is None else tmp_path / sqlite_path
+    tool = _tool("schema.apply")
+    tool.descriptor = tool.descriptor.model_copy(
+        update={"input_model": _ProviderNameArguments}
+    )
+    first = _make_runtime(
+        steps=[_protected_step(arguments={
+            "resource": {"provider": "catalog", "name": "orders"}
+        })],
+        tools=[tool],
+        sqlite_path=database_path,
+    )
+    changed = WorkflowDefinition.from_mapping(
+        {
+            "definition_id": "workflow-1",
+            "version": 1,
+            "steps": [_protected_step(arguments={
+                "resource": {"provider": "catalog", "name": "payments"}
+            })],
+        },
+        first.registry,
+    )
+    try:
+        with first.raw_uow_factory() as uow:
+            persisted = uow.definitions.get("workflow-1", 1)
+
+        assert persisted.digest != changed.digest
+        assert dict(persisted.steps[0].arguments["resource"]) == {
+            "provider": "catalog",
+            "name": "orders",
+        }
+    finally:
+        first.coordinator.close(wait=True)
+        if database_path is not None:
+            first.store.dispose()
+
+
+def test_sqlite_reloaded_secret_reference_is_unavailable_and_cannot_execute(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "reloaded-secret-reference.db"
+    secret_provider = "env"
+    secret_name = "PROD_DATABASE_PASSWORD"
+    tool = _tool("schema.apply", risk=ToolRisk.HIGH)
+    tool.descriptor = tool.descriptor.model_copy(
+        update={"input_model": _SecretReferenceArguments}
+    )
+    runtime = _make_runtime(
+        steps=[_protected_step(arguments={
+            "credential": {"provider": secret_provider, "name": secret_name}
+        })],
+        tools=[tool],
+        sqlite_path=database_path,
+    )
+    try:
+        runtime.coordinator.run_once()
+        request = runtime.pending()
+        runtime.approvals.decide(
+            runtime.run_id,
+            request.id,
+            "approved",
+            expected_version=request.version,
+            binding_digest=request.binding_digest,
+            actor="ops-user",
+            reason="approved",
+        )
     finally:
         runtime.coordinator.close(wait=True)
         runtime.store.dispose()
+
+    restarted_tool = _tool("schema.apply", risk=ToolRisk.HIGH)
+    restarted_tool.descriptor = restarted_tool.descriptor.model_copy(
+        update={"input_model": _SecretReferenceArguments}
+    )
+    restarted = _make_runtime(
+        steps=[],
+        tools=[restarted_tool],
+        sqlite_path=database_path,
+    )
+    try:
+        with restarted.raw_uow_factory() as uow:
+            definition = uow.definitions.get("workflow-1", 1)
+        arguments = definition.steps[0].arguments
+
+        assert isinstance(arguments["credential"], UnavailableSecretRef)
+        with pytest.raises(ValueError, match="secret reference unavailable"):
+            restarted.registry.coerce_arguments("schema.apply", "1.0.0", arguments)
+
+        report = restarted.coordinator.run_once()
+        assert report.blocked_reason == "internal_consistency"
+        assert restarted_tool.calls == []
+        assert restarted.attempts("protected") == ()
+        database_bytes = database_path.read_bytes()
+        assert secret_provider.encode("utf-8") not in database_bytes
+        assert secret_name.encode("utf-8") not in database_bytes
+    finally:
+        restarted.coordinator.close(wait=True)
+        restarted.store.dispose()
 
 
 def test_high_risk_barrier_drains_existing_future_before_becoming_waiting() -> None:

@@ -60,6 +60,15 @@ class StubToolCatalog:
         if "target" not in arguments:
             raise ValueError("target is required")
 
+    def coerce_arguments(
+        self,
+        name: str,
+        version: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.validate_arguments(name, version, arguments)
+        return arguments
+
 
 def build_definition():
     definitions = _load_module("changepilot.workflow.domain.definitions")

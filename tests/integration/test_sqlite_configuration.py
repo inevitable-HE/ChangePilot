@@ -129,7 +129,18 @@ def _insert_current_approval(connection) -> None:
 
 
 @pytest.mark.parametrize("schema_source", ["create_all", "alembic"])
-@pytest.mark.parametrize("invalid_digest", [None, "", "a" * 63, "g" * 64])
+@pytest.mark.parametrize(
+    "invalid_digest",
+    [
+        None,
+        "",
+        "a" * 63,
+        "g" * 64,
+        "+" + "a" * 63,
+        "a_" + "b" * 62,
+        " " + "a" * 62 + " ",
+    ],
+)
 def test_current_approval_digest_constraints_reject_invalid_values(
     tmp_path: Path,
     schema_source: str,

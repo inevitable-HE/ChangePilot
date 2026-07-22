@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
@@ -15,7 +16,11 @@ from changepilot.workflow.domain.validation import (
     require_string,
     require_string_sequence,
 )
-from changepilot.workflow.ports.tools import ToolCatalog
+from changepilot.workflow.ports.tools import (
+    SecretRef,
+    ToolCatalog,
+    UnavailableSecretRef,
+)
 
 
 MAX_STEPS = 100
@@ -107,9 +112,12 @@ class WorkflowDefinition:
                 field="arguments",
                 step_id=step_id,
             )
-            arguments = {key: value for key, value in arguments_mapping.items()}
             try:
-                registry.validate_arguments(tool.name, tool.version, arguments)
+                arguments = _coerce_arguments(
+                    registry,
+                    tool=tool,
+                    raw_arguments=arguments_mapping,
+                )
             except Exception as exc:
                 raise DefinitionValidationError(
                     f"invalid arguments: {exc}",
@@ -267,6 +275,43 @@ def _freeze_value(value: object) -> object:
     return value
 
 
+def _coerce_arguments(
+    registry: ToolCatalog,
+    *,
+    tool: ToolReference,
+    raw_arguments: Mapping[str, object],
+) -> dict[str, object]:
+    coerced = registry.coerce_arguments(tool.name, tool.version, raw_arguments)
+    if hasattr(coerced, "model_dump"):
+        arguments = _materialize_coerced_value(coerced)
+    elif isinstance(coerced, Mapping):
+        arguments = dict(coerced)
+    else:
+        raise TypeError("tool argument coercion must return a mapping or Pydantic model")
+    if not isinstance(arguments, dict):
+        raise TypeError("tool argument coercion must return a mapping")
+    return arguments
+
+
+def _materialize_coerced_value(value: object) -> object:
+    if isinstance(value, SecretRef):
+        return value
+    model_fields = getattr(value.__class__, "model_fields", None)
+    if model_fields is not None:
+        return {
+            field_name: _materialize_coerced_value(getattr(value, field_name))
+            for field_name in model_fields
+        }
+    if isinstance(value, Mapping):
+        return {
+            key: _materialize_coerced_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return tuple(_materialize_coerced_value(item) for item in value)
+    return value
+
+
 def _calculate_digest(
     definition_id: str,
     version: int,
@@ -308,11 +353,10 @@ def _step_to_canonical(step: StepDefinition) -> dict[str, object]:
 
 
 def _thaw_value(value: object) -> object:
+    if isinstance(value, (SecretRef, UnavailableSecretRef)):
+        return "[REDACTED]"
     if isinstance(value, MappingProxyType):
-        thawed = {key: _thaw_value(item) for key, item in value.items()}
-        if set(thawed) == {"provider", "name"}:
-            return {"provider": "[REDACTED]", "name": "[REDACTED]"}
-        return thawed
+        return {key: _thaw_value(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [_thaw_value(item) for item in value]
     return value

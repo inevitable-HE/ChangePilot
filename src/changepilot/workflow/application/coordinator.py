@@ -16,6 +16,7 @@ from changepilot.workflow.application.approvals import (
 from changepilot.workflow.application.scheduler import ready_steps
 from changepilot.workflow.application.tooling import (
     ToolRegistry,
+    contains_unavailable_secret_ref,
     logical_idempotency_key,
     redact,
 )
@@ -420,15 +421,18 @@ class Coordinator:
     ) -> tuple[object, str, tuple[str, ...]]:
         descriptor = self._tools.descriptor_for(step.tool.name, step.tool.version)
         canonical_json_value(step.arguments)
-        coerced_arguments = self._tools.coerce_arguments(
-            step.tool.name,
-            step.tool.version,
-            step.arguments,
-        )
-        redacted_arguments = redact(
-            coerced_arguments,
-            sensitive_paths=descriptor.sensitive_argument_paths,
-        )
+        if contains_unavailable_secret_ref(step.arguments):
+            redacted_arguments = canonical_json_value(step.arguments)
+        else:
+            coerced_arguments = self._tools.coerce_arguments(
+                step.tool.name,
+                step.tool.version,
+                step.arguments,
+            )
+            redacted_arguments = redact(
+                coerced_arguments,
+                sensitive_paths=descriptor.sensitive_argument_paths,
+            )
         redacted_arguments = canonical_json_value(redacted_arguments)
         binding_digest = approval_binding_digest(
             definition.digest,

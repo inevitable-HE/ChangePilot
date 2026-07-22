@@ -16,7 +16,7 @@ from changepilot.workflow.ports.persistence import (
     LegacyApprovalRecord,
     OptimisticLockError,
 )
-from changepilot.workflow.ports.tools import SecretRef
+from changepilot.workflow.ports.tools import SecretRef, UnavailableSecretRef
 
 
 def approval_binding_digest(
@@ -48,7 +48,7 @@ def canonical_json_value(value: object) -> object:
 
 
 def _canonical_json_value(value: object, *, seen: set[int]) -> object:
-    if isinstance(value, SecretRef):
+    if isinstance(value, (SecretRef, UnavailableSecretRef)):
         return "[REDACTED]"
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -394,13 +394,11 @@ def _text_digest(domain: str, value: str) -> str:
 
 
 def _is_sha256_digest(value: object) -> bool:
-    if not isinstance(value, str) or len(value) != 64:
-        return False
-    try:
-        int(value, 16)
-    except ValueError:
-        return False
-    return True
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )
 
 
 def _coerce_actor_digest(value: object) -> ApprovalActorDigest | None:

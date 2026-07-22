@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
@@ -88,6 +89,17 @@ class SecretRef(BoundaryModel):
 
     def __repr__(self) -> str:
         return f"SecretRef(provider={self.provider!r}, name='[REDACTED]')"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableSecretRef:
+    """A persisted SecretRef that cannot be rehydrated without a provider."""
+
+    def __repr__(self) -> str:
+        return "UnavailableSecretRef()"
 
     def __str__(self) -> str:
         return self.__repr__()
@@ -270,3 +282,11 @@ class ToolCatalog(Protocol):
         arguments: dict[str, Any],
     ) -> None:
         """Raise when the provided arguments are not valid for the tool."""
+
+    def coerce_arguments(
+        self,
+        name: str,
+        version: str,
+        arguments: Mapping[str, Any],
+    ) -> BaseModel | Mapping[str, Any]:
+        """Return schema-coerced arguments suitable for definition storage."""

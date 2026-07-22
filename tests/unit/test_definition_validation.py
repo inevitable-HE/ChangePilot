@@ -44,6 +44,15 @@ class StubToolCatalog:
             if not isinstance(arguments[key], expected_type):
                 raise ValueError(f"{key} must be {expected_type.__name__}")
 
+    def coerce_arguments(
+        self,
+        name: str,
+        version: str,
+        arguments: dict[str, object],
+    ) -> dict[str, object]:
+        self.validate_arguments(name, version, arguments)
+        return arguments
+
 
 def load_definitions_module():
     try:
