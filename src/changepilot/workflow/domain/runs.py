@@ -83,6 +83,8 @@ class WorkflowRun:
     definition_digest: str
     state: RunState = RunState.PENDING
     revision: int = 0
+    original_error: dict[str, str] | None = None
+    compensation_error: dict[str, str] | None = None
 
     @classmethod
     def new(
@@ -125,6 +127,8 @@ class StepRun:
     step_id: str
     state: StepState = StepState.PENDING
     revision: int = 0
+    completion_sequence: int | None = None
+    logical_idempotency_key: str | None = None
 
     @classmethod
     def new(cls, run_id: str, step_id: str) -> "StepRun":

@@ -69,17 +69,21 @@ def _make_runtime(
     tool = ProbeTool(probe_result, probeable=probeable)
     registry = ToolRegistry()
     registry.register(tool)
+    step_definition = {
+        "id": "inspect",
+        "tool": {"name": "inspect", "version": "1.0.0"},
+        "arguments": {"value": "checked"},
+    }
+    if attempt_phase is ToolExecutionPhase.COMPENSATION:
+        step_definition["compensation_tool"] = {
+            "name": "inspect",
+            "version": "1.0.0",
+        }
     definition = WorkflowDefinition.from_mapping(
         {
             "definition_id": "workflow-1",
             "version": 1,
-            "steps": [
-                {
-                    "id": "inspect",
-                    "tool": {"name": "inspect", "version": "1.0.0"},
-                    "arguments": {"value": "checked"},
-                }
-            ],
+            "steps": [step_definition],
         },
         registry,
     )
@@ -112,6 +116,21 @@ def _make_runtime(
         uow.definitions.add(definition)
         uow.runs.add(run)
         uow.steps.add(step)
+        if attempt_phase is ToolExecutionPhase.COMPENSATION:
+            uow.attempts.add(
+                StepAttempt(
+                    run_id="run-1",
+                    step_id="inspect",
+                    attempt_no=1,
+                    phase=ToolExecutionPhase.FORWARD.value,
+                    attempt_id="forward-attempt-1",
+                    status="success",
+                    idempotency_key="forward-logical-key",
+                    started_at=clock.now(),
+                    effect_applied=True,
+                    completed_at=clock.now(),
+                )
+            )
         uow.attempts.add(attempt)
         uow.commit()
     return Runtime(
@@ -220,6 +239,7 @@ def test_recovery_finishes_found_compensation_effect() -> None:
         ),
         run_state=RunState.COMPENSATING,
         attempt_phase=ToolExecutionPhase.COMPENSATION,
+        step_state=StepState.SUCCEEDED,
     )
 
     runtime.service.recover_nonterminal_runs()

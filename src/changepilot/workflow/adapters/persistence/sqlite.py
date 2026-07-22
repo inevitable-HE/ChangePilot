@@ -319,6 +319,16 @@ def _load_run_rows(connection: Connection) -> dict[str, object]:
             definition_digest=row["definition_digest"],
             state=RunState(row["state"]),
             revision=row["revision"],
+            original_error=(
+                json.loads(row["original_error"])
+                if row["original_error"] is not None
+                else None
+            ),
+            compensation_error=(
+                json.loads(row["compensation_error"])
+                if row["compensation_error"] is not None
+                else None
+            ),
         )
         for row in rows
     }
@@ -332,6 +342,8 @@ def _load_step_rows(connection: Connection) -> dict[tuple[str, str], object]:
             step_id=row["step_id"],
             state=StepState(row["state"]),
             revision=row["revision"],
+            completion_sequence=row["completion_sequence"],
+            logical_idempotency_key=row["logical_idempotency_key"],
         )
         for row in rows
     }
@@ -969,6 +981,16 @@ class SQLiteUnitOfWork:
                     state=run.state.value,
                     revision=run.revision,
                     last_event_sequence=self._snapshot.committed_event_sequences.get(run.run_id, 0),
+                    original_error=(
+                        _serialize_json(run.original_error)
+                        if run.original_error is not None
+                        else None
+                    ),
+                    compensation_error=(
+                        _serialize_json(run.compensation_error)
+                        if run.compensation_error is not None
+                        else None
+                    ),
                 )
             )
 
@@ -987,6 +1009,16 @@ class SQLiteUnitOfWork:
                     definition_digest=run.definition_digest,
                     state=run.state.value,
                     revision=run.revision,
+                    original_error=(
+                        _serialize_json(run.original_error)
+                        if run.original_error is not None
+                        else None
+                    ),
+                    compensation_error=(
+                        _serialize_json(run.compensation_error)
+                        if run.compensation_error is not None
+                        else None
+                    ),
                 )
             )
             if result.rowcount != 1:
@@ -1005,6 +1037,8 @@ class SQLiteUnitOfWork:
                     step_id=step.step_id,
                     state=step.state.value,
                     revision=step.revision,
+                    completion_sequence=step.completion_sequence,
+                    logical_idempotency_key=step.logical_idempotency_key,
                 )
             )
 
@@ -1021,6 +1055,8 @@ class SQLiteUnitOfWork:
                 .values(
                     state=step.state.value,
                     revision=step.revision,
+                    completion_sequence=step.completion_sequence,
+                    logical_idempotency_key=step.logical_idempotency_key,
                 )
             )
             if result.rowcount != 1:

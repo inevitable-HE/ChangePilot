@@ -220,7 +220,7 @@ def test_alembic_upgrade_creates_runtime_schema_and_constraints(tmp_path: Path) 
         assert "alembic_version" in tables
         assert (
             connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-            == "0002_durable_approvals"
+            == "0003_compensation_errors"
         )
 
         workflow_run_columns = {
@@ -228,6 +228,7 @@ def test_alembic_upgrade_creates_runtime_schema_and_constraints(tmp_path: Path) 
         }
         assert workflow_run_columns["last_event_sequence"][3] == 1
         assert workflow_run_columns["revision"][3] == 1
+        assert workflow_run_columns["compensation_error"][3] == 0
         assert connection.exec_driver_sql("PRAGMA foreign_key_list('workflow_runs')").all() == []
 
         step_run_foreign_keys = _foreign_keys_by_id(connection, "step_runs")

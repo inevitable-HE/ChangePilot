@@ -13,7 +13,7 @@ from changepilot.workflow.application.approvals import (
     approval_binding_digest,
     canonical_json_value,
 )
-from changepilot.workflow.application.scheduler import ready_steps
+from changepilot.workflow.application.scheduler import compensation_order, ready_steps
 from changepilot.workflow.application.tooling import (
     ToolRegistry,
     contains_unavailable_secret_ref,
@@ -163,6 +163,14 @@ class Coordinator:
                 completed=_completed_for_run(completed, run_id),
                 blocked_reason="approval_recovery_required",
             )
+        if selected_run is not None and selected_run.state is RunState.COMPENSATING:
+            if collection_failed:
+                return CoordinationReport(
+                    run_id=run_id,
+                    completed=_completed_for_run(completed, run_id),
+                    blocked_reason=ErrorClass.INTERNAL_CONSISTENCY.value,
+                )
+            return self._run_compensation_once(run_id, completed)
         if selected_run is not None and selected_run.state not in _FORWARD_RUN_STATES:
             return CoordinationReport(
                 run_id=run_id,
@@ -691,10 +699,93 @@ class Coordinator:
                 del self._owned_futures[future]
         return tuple(persisted), persistence_failed
 
+    def _run_compensation_once(
+        self,
+        run_id: str,
+        completed: tuple[ExecutionOutcome, ...],
+    ) -> CoordinationReport:
+        if self._has_persisted_recovery_work(run_id):
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="compensation_recovery_required",
+            )
+        definition, step_runs = self._load_definition_and_steps(run_id)
+        with self._uow_factory() as uow:
+            attempts = uow.attempts.list(run_id)
+        compensable = compensation_order(definition, step_runs, attempts)
+        pending = _pending_compensations(definition, step_runs, attempts)
+        if not compensable:
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="run_not_forward",
+            )
+        if not pending:
+            with self._uow_factory() as uow:
+                run = uow.runs.get(run_id)
+                if run is not None and run.state is RunState.COMPENSATING:
+                    compensated, event = run.transition(
+                        RunState.COMPENSATED,
+                        occurred_at=self._clock.now(),
+                    )
+                    uow.runs.save(compensated, expected_revision=run.revision)
+                    uow.events.append(event)
+                    uow.commit()
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="run_terminal",
+            )
+        if self._available_capacity() == 0:
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="capacity",
+            )
+        prepared = self._prepare_attempt(
+            run_id,
+            pending[0],
+            phase=ToolExecutionPhase.COMPENSATION,
+        )
+        self._commit_attempt_started(prepared)
+        try:
+            future = self._executor.submit(_execute_request, prepared.request)
+        except Exception:
+            self._persist_outcome(
+                _failed_outcome(
+                    prepared.request,
+                    error_class=ErrorClass.PERMANENT,
+                    safe_message="tool submission failed",
+                ),
+                sensitive_paths=prepared.sensitive_paths,
+            )
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                dispatched=(prepared.step.id,),
+            )
+        self._owned_futures[future] = _OwnedFuture(
+            request=prepared.request,
+            future=future,
+            sensitive_paths=prepared.sensitive_paths,
+        )
+        just_completed, collection_failed = self._collect_outcomes()
+        return CoordinationReport(
+            run_id=run_id,
+            dispatched=(prepared.step.id,),
+            completed=_completed_for_run(completed + just_completed, run_id),
+            blocked_reason=(
+                ErrorClass.INTERNAL_CONSISTENCY.value if collection_failed else None
+            ),
+        )
+
     def _prepare_attempt(
         self,
         run_id: str,
         step: StepDefinition,
+        *,
+        phase: ToolExecutionPhase = ToolExecutionPhase.FORWARD,
     ) -> _PreparedAttempt:
         with self._uow_factory() as uow:
             run = uow.runs.get(run_id)
@@ -704,19 +795,30 @@ class Coordinator:
             if step_run is None:
                 raise LookupError(f"unknown step {run_id}:{step.id}")
             attempts = uow.attempts.list(run_id, step_id=step.id)
-        tool = self._tools.resolve(step.tool.name, step.tool.version)
+        tool_reference = (
+            step.tool if phase is ToolExecutionPhase.FORWARD else step.compensation_tool
+        )
+        if tool_reference is None:
+            raise RuntimeError(f"step {step.id} has no compensation tool")
+        tool = self._tools.resolve(tool_reference.name, tool_reference.version)
         arguments = self._tools.coerce_arguments(
-            step.tool.name,
-            step.tool.version,
+            tool_reference.name,
+            tool_reference.version,
             step.arguments,
         )
-        attempt_no = max((attempt.attempt_no for attempt in attempts), default=0) + 1
+        attempt_no = (
+            max(
+                (attempt.attempt_no for attempt in attempts if attempt.phase == phase.value),
+                default=0,
+            )
+            + 1
+        )
         key = logical_idempotency_key(
             run_id=run_id,
             step_id=step.id,
-            tool_name=step.tool.name,
-            tool_version=step.tool.version,
-            phase=ToolExecutionPhase.FORWARD,
+            tool_name=tool_reference.name,
+            tool_version=tool_reference.version,
+            phase=phase,
         )
         started_at = self._clock.now()
         deadline = _parse_timestamp(started_at) + timedelta(
@@ -728,7 +830,7 @@ class Coordinator:
                 run_id=run_id,
                 step_id=step.id,
                 attempt_number=attempt_no,
-                phase=ToolExecutionPhase.FORWARD,
+                phase=phase,
                 logical_idempotency_key=key,
                 deadline=deadline,
                 metadata={},
@@ -741,7 +843,7 @@ class Coordinator:
                 run_id=run_id,
                 step_id=step.id,
                 attempt_no=attempt_no,
-                phase=ToolExecutionPhase.FORWARD.value,
+                phase=phase.value,
                 attempt_id=self._identifiers.new(),
                 status="running",
                 idempotency_key=key,
@@ -757,26 +859,37 @@ class Coordinator:
             run = uow.runs.get(attempt.run_id)
             if run is None:
                 raise LookupError(f"unknown run {attempt.run_id}")
-            if run.state is RunState.PENDING:
+            if attempt.phase == ToolExecutionPhase.FORWARD.value and run.state is RunState.PENDING:
                 running_run, run_event = run.transition(
                     RunState.RUNNING,
                     occurred_at=attempt.started_at,
                 )
                 uow.runs.save(running_run, expected_revision=run.revision)
                 uow.events.append(run_event)
-            elif run.state is not RunState.RUNNING:
+            elif (
+                attempt.phase == ToolExecutionPhase.FORWARD.value
+                and run.state is not RunState.RUNNING
+            ):
                 raise RuntimeError("run is not in a forward execution state")
+            elif (
+                attempt.phase == ToolExecutionPhase.COMPENSATION.value
+                and run.state is not RunState.COMPENSATING
+            ):
+                raise RuntimeError("run is not compensating")
 
             step_run = uow.steps.get(attempt.run_id, attempt.step_id)
             if step_run is None:
                 raise LookupError(f"unknown step {attempt.run_id}:{attempt.step_id}")
-            running_step, step_event = step_run.transition(
-                StepState.RUNNING,
-                occurred_at=attempt.started_at,
-            )
-            uow.steps.save(running_step, expected_revision=step_run.revision)
+            if attempt.phase == ToolExecutionPhase.FORWARD.value:
+                active_step, step_event = step_run.transition(
+                    StepState.RUNNING,
+                    occurred_at=attempt.started_at,
+                )
+                uow.steps.save(active_step, expected_revision=step_run.revision)
+                uow.events.append(step_event)
+            else:
+                active_step = step_run
             uow.attempts.add(attempt)
-            uow.events.append(step_event)
             uow.events.append(
                 AuditEvent.tool_attempt_started(
                     run_id=attempt.run_id,
@@ -785,8 +898,8 @@ class Coordinator:
                     attempt_no=attempt.attempt_no,
                     phase=attempt.phase,
                     occurred_at=attempt.started_at,
-                    state=running_step.state.value,
-                    revision=running_step.revision,
+                    state=active_step.state.value,
+                    revision=active_step.revision,
                 )
             )
             uow.commit()
@@ -818,6 +931,19 @@ class Coordinator:
                 if item.attempt_no == outcome.attempt_no
             )
             completed_at = self._clock.now()
+            if attempt.phase == ToolExecutionPhase.COMPENSATION.value:
+                self._persist_compensation_outcome(
+                    uow,
+                    run,
+                    definition,
+                    step_run,
+                    attempt,
+                    outcome,
+                    completed_at=completed_at,
+                    sensitive_paths=sensitive_paths,
+                )
+                uow.commit()
+                return
             if outcome.status == "success":
                 next_state = StepState.SUCCEEDED
                 next_attempt_at = None
@@ -845,6 +971,23 @@ class Coordinator:
                 outcome.result,
                 sensitive_paths=sensitive_paths,
             )
+            if next_state is StepState.SUCCEEDED:
+                sequence = max(
+                    (
+                        item.completion_sequence or 0
+                        for item in (
+                            uow.steps.get(outcome.run_id, step.id)
+                            for step in definition.steps
+                        )
+                        if item is not None
+                    ),
+                    default=0,
+                ) + 1
+                changed_step = replace(
+                    changed_step,
+                    completion_sequence=sequence,
+                    logical_idempotency_key=attempt.idempotency_key,
+                )
             completed_attempt = replace(
                 attempt,
                 status=outcome.status,
@@ -888,15 +1031,103 @@ class Coordinator:
                 uow.runs.save(succeeded_run, expected_revision=run.revision)
                 uow.events.append(run_event)
             elif run.state is RunState.RUNNING and next_state is StepState.FAILED:
+                all_steps = tuple(
+                    uow.steps.get(outcome.run_id, step.id)
+                    for step in definition.steps
+                )
+                target_state = (
+                    RunState.COMPENSATING
+                    if compensation_order(
+                        definition,
+                        tuple(item for item in all_steps if item is not None),
+                        uow.attempts.list(outcome.run_id),
+                    )
+                    else RunState.FAILED
+                )
                 failed_run, run_event = run.transition(
-                    RunState.FAILED,
+                    target_state,
                     occurred_at=completed_at,
+                )
+                failed_run = replace(
+                    failed_run,
+                    original_error={
+                        "error_class": outcome.error_class or "permanent",
+                        "error_message": outcome.error_message or "tool execution failed",
+                    },
                 )
                 uow.runs.save(failed_run, expected_revision=run.revision)
                 uow.events.append(run_event)
             uow.commit()
         if outcome.error_class == ErrorClass.RESULT_UNKNOWN.value:
             self._locally_persisted_result_unknown_runs.add(outcome.run_id)
+
+    def _persist_compensation_outcome(
+        self,
+        uow: object,
+        run: object,
+        definition: WorkflowDefinition,
+        step_run: StepRun,
+        attempt: StepAttempt,
+        outcome: ExecutionOutcome,
+        *,
+        completed_at: str,
+        sensitive_paths: tuple[str, ...],
+    ) -> None:
+        completed_attempt = replace(
+            attempt,
+            status=outcome.status,
+            effect_applied=outcome.effect_applied,
+            completed_at=completed_at,
+            next_attempt_at=None,
+            result=redact(outcome.result, sensitive_paths=sensitive_paths),
+            error_class=outcome.error_class,
+            error_message=outcome.error_message,
+        )
+        uow.attempts.save(completed_attempt)
+        uow.events.append(
+            AuditEvent.tool_attempt_completed(
+                run_id=attempt.run_id,
+                step_id=attempt.step_id,
+                attempt_id=attempt.attempt_id,
+                attempt_no=attempt.attempt_no,
+                phase=attempt.phase,
+                occurred_at=completed_at,
+                state=step_run.state.value,
+                revision=step_run.revision,
+                error_class=outcome.error_class,
+                summary=_outcome_summary(outcome, completed_attempt.result),
+            )
+        )
+        if outcome.status != "success":
+            manual, event = run.transition(
+                RunState.MANUAL_INTERVENTION,
+                occurred_at=completed_at,
+            )
+            manual = replace(
+                manual,
+                compensation_error={
+                    "error_class": outcome.error_class or "permanent",
+                    "error_message": outcome.error_message or "tool execution failed",
+                },
+            )
+            uow.runs.save(manual, expected_revision=run.revision)
+            uow.events.append(event)
+            return
+        step_runs = tuple(
+            uow.steps.get(run.run_id, step.id) for step in definition.steps
+        )
+        if _pending_compensations(
+            definition,
+            tuple(item for item in step_runs if item is not None),
+            uow.attempts.list(run.run_id),
+        ):
+            return
+        compensated, event = run.transition(
+            RunState.COMPENSATED,
+            occurred_at=completed_at,
+        )
+        uow.runs.save(compensated, expected_revision=run.revision)
+        uow.events.append(event)
 
 
 def _execute_request(request: _ExecutionRequest) -> ExecutionOutcome:
@@ -995,6 +1226,24 @@ def _completed_for_run(
 
 def _step_run(step_runs: tuple[StepRun, ...], step_id: str) -> StepRun:
     return next(step_run for step_run in step_runs if step_run.step_id == step_id)
+
+
+def _pending_compensations(
+    definition: WorkflowDefinition,
+    step_runs: tuple[StepRun, ...],
+    attempts: tuple[StepAttempt, ...],
+) -> tuple[StepDefinition, ...]:
+    completed_step_ids = {
+        attempt.step_id
+        for attempt in attempts
+        if attempt.phase == ToolExecutionPhase.COMPENSATION.value
+        and attempt.status in {"success", "succeeded"}
+    }
+    return tuple(
+        step
+        for step in compensation_order(definition, step_runs, attempts)
+        if step.id not in completed_step_ids
+    )
 
 
 def _parse_timestamp(value: str) -> datetime:

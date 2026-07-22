@@ -59,18 +59,22 @@ def _seed(
     registry = ToolRegistry()
     tool = ScriptedLedgerTool(descriptor=_descriptor(high_risk=high_risk), ledger_path=Path("unused"))
     registry.register(tool)
+    step_definition = {
+        "id": "inspect",
+        "tool": {"name": "inspect", "version": "1.0.0"},
+        "arguments": {"value": "checked"},
+        "risk": "high" if high_risk else "low",
+    }
+    if phase is ToolExecutionPhase.COMPENSATION:
+        step_definition["compensation_tool"] = {
+            "name": "inspect",
+            "version": "1.0.0",
+        }
     definition = WorkflowDefinition.from_mapping(
         {
             "definition_id": "workflow-1",
             "version": 1,
-            "steps": [
-                {
-                    "id": "inspect",
-                    "tool": {"name": "inspect", "version": "1.0.0"},
-                    "arguments": {"value": "checked"},
-                    "risk": "high" if high_risk else "low",
-                }
-            ],
+            "steps": [step_definition],
         },
         registry,
     )
@@ -85,7 +89,21 @@ def _seed(
     with uow_factory() as uow:
         uow.definitions.add(definition)
         uow.runs.add(run)
-        uow.steps.add(StepRun(run_id="run-1", step_id="inspect", state=StepState.READY, revision=1))
+        uow.steps.add(
+            StepRun(
+                run_id="run-1",
+                step_id="inspect",
+                state=(
+                    StepState.SUCCEEDED
+                    if phase is ToolExecutionPhase.COMPENSATION
+                    else StepState.READY
+                ),
+                revision=2 if phase is ToolExecutionPhase.COMPENSATION else 1,
+                completion_sequence=(
+                    1 if phase is ToolExecutionPhase.COMPENSATION else None
+                ),
+            )
+        )
         uow.commit()
     return engine, uow_factory, registry, clock
 
@@ -147,11 +165,22 @@ def _crash_after_compensation_effect(database_path: Path, ledger_path: Path) -> 
     )
     with uow_factory() as uow:
         run = uow.runs.get("run-1")
-        step = uow.steps.get("run-1", "inspect")
         compensating, run_event = run.transition(RunState.COMPENSATING, occurred_at=clock.now())
-        running, step_event = step.transition(StepState.RUNNING, occurred_at=clock.now())
         uow.runs.save(compensating, expected_revision=run.revision)
-        uow.steps.save(running, expected_revision=step.revision)
+        uow.attempts.add(
+            StepAttempt(
+                run_id="run-1",
+                step_id="inspect",
+                attempt_no=1,
+                phase=ToolExecutionPhase.FORWARD.value,
+                attempt_id="forward-attempt-1",
+                status="success",
+                idempotency_key="forward-logical-key",
+                started_at=clock.now(),
+                effect_applied=True,
+                completed_at=clock.now(),
+            )
+        )
         uow.attempts.add(
             StepAttempt(
                 run_id="run-1",
@@ -165,7 +194,6 @@ def _crash_after_compensation_effect(database_path: Path, ledger_path: Path) -> 
             )
         )
         uow.events.append(run_event)
-        uow.events.append(step_event)
         uow.commit()
     tool = ScriptedLedgerTool(
         descriptor=_descriptor(),

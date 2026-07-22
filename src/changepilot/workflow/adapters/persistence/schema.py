@@ -55,6 +55,7 @@ workflow_runs = Table(
         server_default=text("0"),
     ),
     Column("original_error", Text(), nullable=True),
+    Column("compensation_error", Text(), nullable=True),
     Column(
         "created_at",
         String(),
