@@ -18,8 +18,8 @@ verification_report: docs/superpowers/reports/2026-07-22-establish-reliable-work
 branch_status: handled
 created_at: 2026-07-16
 verified_at: 2026-07-22
-archive_confirmation: pending
-archived: false
+archive_confirmation: confirmed
+archived: true
 direct_override: null
 handoff_context: openspec/changes/establish-reliable-workflow-core/.comet/handoff/design-context.json
 handoff_hash: 828de7d9f3d0eec0d75c698dca14d8fa4972e31a028d2f80e1c3c8d33b354dac

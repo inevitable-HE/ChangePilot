@@ -2,6 +2,7 @@
 change: establish-reliable-workflow-core
 design-doc: docs/superpowers/specs/2026-07-16-reliable-workflow-core-design.md
 base-ref: 64eaa1c323836383d78de1310881a446083957d0
+archived-with: 2026-07-22-establish-reliable-workflow-core
 ---
 
 # ChangePilot 可靠工作流内核实施计划
