@@ -864,7 +864,7 @@ git commit -m "feat: recover interrupted workflow attempts"
 - Consumes: successful `StepRun.completion_sequence`, DAG dependencies, compensation tool references, attempt phases, and recovery probe semantics.
 - Produces: `compensation_order()`, compensation attempts and keys, `compensated` terminal state, and `manual_intervention` preserving original and compensation failures.
 
-- [ ] **Step 1: Write failing ordering and dual-error tests**
+- [x] **Step 1: Write failing ordering and dual-error tests**
 
 ```python
 # tests/unit/test_compensation_order.py
@@ -890,13 +890,13 @@ def test_compensation_failure_preserves_both_errors(runtime) -> None:
     assert view.compensation_error.code == "service_restore_failed"
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for compensation ordering and dual-error tests**
 
 Run: `python -m pytest tests/unit/test_compensation_order.py tests/integration/test_compensation.py -q`
 
 Expected: FAIL because compensation ordering and coordinator mode are absent.
 
-- [ ] **Step 3: Implement reverse-topological compensation with independent attempts and recovery**
+- [x] **Step 3: Implement reverse-topological compensation with independent attempts and recovery**
 
 ```python
 # src/changepilot/workflow/application/scheduler.py
@@ -913,13 +913,13 @@ def compensation_order(dependencies: dict[str, tuple[str, ...]], completion_sequ
 
 The coordinator enters `compensating` after a forward failure when at least one successful step has a compensation tool. Persist compensation attempts with phase `compensation`, a separate stable key namespace, and the same two-transaction/probe behavior. Never overwrite `original_error`; write `compensation_error` separately. Complete as `compensated` only after every required compensation succeeds.
 
-- [ ] **Step 4: Verify GREEN including interrupted compensation**
+- [x] **Step 4: Verify GREEN including interrupted compensation**
 
 Run: `python -m pytest tests/unit/test_compensation_order.py tests/integration/test_compensation.py tests/process/test_process_recovery.py -q`
 
 Expected: PASS for reverse order, unrelated completion order, no compensation for unsuccessful steps, compensation restart, compensated terminal state, and dual-error manual intervention.
 
-- [ ] **Step 5: Commit Task 9**
+- [x] **Step 5: Commit Task 9**
 
 ```bash
 git add src/changepilot/workflow/application/scheduler.py src/changepilot/workflow/application/coordinator.py tests/unit/test_compensation_order.py tests/integration/test_compensation.py tests/process/test_process_recovery.py
