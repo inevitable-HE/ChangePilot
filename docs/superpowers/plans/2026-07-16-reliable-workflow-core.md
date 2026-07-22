@@ -792,7 +792,7 @@ git commit -m "feat: enforce durable approval barriers"
 - Consumes: persisted incomplete attempts, tool idempotency capability, Tool.probe, coordinator, SQLite adapter, and Fake Tool ledger.
 - Produces: `RecoveryService.recover_nonterminal_runs()`, probe-first recovery, result-unknown handling, and subprocess fault injection points.
 
-- [ ] **Step 1: Write failing subprocess recovery test for side-effect-before-result-commit**
+- [x] **Step 1: Write failing subprocess recovery test for side-effect-before-result-commit**
 
 ```python
 # tests/process/test_process_recovery.py
@@ -813,13 +813,13 @@ def test_restart_probes_existing_effect_without_repeating_it(tmp_path) -> None:
     assert len([item for item in effects if item["step_id"] == "migrate-schema"]) == 1
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for subprocess crash recovery tests**
 
 Run: `python -m pytest tests/integration/test_recovery.py tests/process/test_process_recovery.py -q`
 
 Expected: FAIL because startup recovery and the process scenario are absent.
 
-- [ ] **Step 3: Implement recovery scan, incomplete-attempt probe, and manual-intervention rules**
+- [x] **Step 3: Implement recovery scan, incomplete-attempt probe, and manual-intervention rules**
 
 ```python
 # src/changepilot/workflow/application/recovery.py
@@ -839,13 +839,13 @@ class RecoveryService:
 
 For an incomplete running attempt, call `probe` with the persisted logical key before any execute call. Probe outcomes are `applied(result)`, `not_applied`, and `unknown`. Applied persists success; not-applied returns an idempotent step to ready; unknown or a non-probeable tool moves the step and run to `manual_intervention`. Record every recovery choice as a redacted event. Implement fault points before execute, after external ledger write before result commit, while waiting approval, and after compensation effect before commit using `os._exit(91)` only inside the subprocess fixture.
 
-- [ ] **Step 4: Verify GREEN for all restart windows**
+- [x] **Step 4: Verify GREEN for all restart windows**
 
 Run: `python -m pytest tests/integration/test_recovery.py tests/process/test_process_recovery.py -q`
 
 Expected: PASS with one external ledger effect per logical step, the same approval request after restart, and manual intervention for a non-idempotent unknown result.
 
-- [ ] **Step 5: Commit Task 8**
+- [x] **Step 5: Commit Task 8**
 
 ```bash
 git add src/changepilot/workflow/application/recovery.py tests/integration/test_recovery.py tests/process
