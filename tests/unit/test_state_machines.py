@@ -63,7 +63,16 @@ WORKFLOW_ALLOWED = {
 STEP_ALLOWED = {
     "pending": frozenset({"ready"}),
     "ready": frozenset({"running"}),
-    "running": frozenset({"retry_wait", "succeeded", "failed", "result_unknown"}),
+    "running": frozenset(
+        {
+            "ready",
+            "retry_wait",
+            "succeeded",
+            "failed",
+            "result_unknown",
+            "manual_intervention",
+        }
+    ),
     "retry_wait": frozenset({"ready"}),
     "result_unknown": frozenset({"ready", "succeeded", "manual_intervention"}),
 }

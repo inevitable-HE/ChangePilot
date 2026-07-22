@@ -133,6 +133,9 @@ class RunRepository(Protocol[RunT]):
     def get(self, run_id: str) -> RunT | None:
         """Return the staged or committed run."""
 
+    def list(self) -> tuple[RunT, ...]:
+        """List all runs visible inside this unit of work."""
+
     def save(self, run: RunT, *, expected_revision: int) -> None:
         """Stage a run update guarded by optimistic locking."""
 

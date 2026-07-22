@@ -382,7 +382,11 @@ def approval_recovery_required(uow: object, run: object) -> bool:
         return True
     return any(
         getattr(attempt, "status", None) == ErrorClass.RESULT_UNKNOWN.value
-        or getattr(attempt, "error_class", None) == ErrorClass.RESULT_UNKNOWN.value
+        or (
+            getattr(attempt, "error_class", None) == ErrorClass.RESULT_UNKNOWN.value
+            and getattr(attempt, "status", None)
+            not in {"not_applied", "succeeded", "manual_intervention"}
+        )
         for attempt in uow.attempts.list(run.run_id)
     )
 

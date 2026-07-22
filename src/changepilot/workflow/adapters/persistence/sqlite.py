@@ -548,6 +548,12 @@ class _SQLiteRunRepository(RunRepository[RunT]):
             return None
         return _clone(run)
 
+    def list(self) -> tuple[RunT, ...]:
+        return tuple(
+            _clone(run)
+            for _run_id, run in sorted(self._snapshot.runs.items())
+        )
+
     def save(self, run: RunT, *, expected_revision: int) -> None:
         self._ensure_writable()
         expected_new_revision = expected_revision + 1

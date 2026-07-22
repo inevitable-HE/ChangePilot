@@ -42,10 +42,12 @@ STEP_TRANSITIONS: dict[StepState, frozenset[StepState]] = {
     StepState.READY: frozenset({StepState.RUNNING}),
     StepState.RUNNING: frozenset(
         {
+            StepState.READY,
             StepState.RETRY_WAIT,
             StepState.SUCCEEDED,
             StepState.FAILED,
             StepState.RESULT_UNKNOWN,
+            StepState.MANUAL_INTERVENTION,
         }
     ),
     StepState.RETRY_WAIT: frozenset({StepState.READY}),
