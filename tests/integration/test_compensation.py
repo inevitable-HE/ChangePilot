@@ -9,7 +9,12 @@ from changepilot.workflow.domain.definitions import WorkflowDefinition
 from changepilot.workflow.domain.runs import StepRun, WorkflowRun
 from changepilot.workflow.domain.states import RunState, StepState
 from changepilot.workflow.ports.tools import ToolExecutionPhase
-from tests.support.fakes import DeterministicIdentifiers, FakeClock, ScriptedTool
+from tests.support.fakes import (
+    BlockingTool,
+    DeterministicIdentifiers,
+    FakeClock,
+    ScriptedTool,
+)
 
 
 @dataclass
@@ -21,13 +26,17 @@ class Runtime:
     compensation: ScriptedTool
 
 
-def _runtime(*, compensation_outcome: str = "success") -> Runtime:
+def _runtime(
+    *,
+    compensation_outcome: str = "success",
+    compensation_tool: ScriptedTool | None = None,
+) -> Runtime:
     store = MemoryStore()
     uow_factory = lambda: MemoryUnitOfWork(store)
     clock = FakeClock()
     forward = ScriptedTool("prepare")
     verify = ScriptedTool("verify")
-    compensation = ScriptedTool("prepare.undo")
+    compensation = compensation_tool or ScriptedTool("prepare.undo")
     forward.script(["success"])
     verify.script(["permanent"])
     compensation.script([compensation_outcome])
@@ -144,4 +153,32 @@ def test_failed_compensation_preserves_both_errors_for_manual_intervention() -> 
             "error_message": "tool execution failed",
         }
     finally:
+        runtime.coordinator.close(wait=True)
+
+
+def test_completed_unpersisted_compensation_is_not_dispatched_twice() -> None:
+    compensation = BlockingTool("prepare.undo")
+    runtime = _runtime(compensation_tool=compensation)
+    original_collect = runtime.coordinator._collect_outcomes
+    try:
+        _run_to_compensation(runtime)
+        runtime.coordinator.run_once()
+        assert compensation.started.wait(timeout=1)
+
+        def collect_then_finish():
+            collected = original_collect()
+            compensation.release.set()
+            assert compensation.finished.wait(timeout=1)
+            return collected
+
+        runtime.coordinator._collect_outcomes = collect_then_finish
+
+        report = runtime.coordinator.run_once()
+
+        assert report.dispatched == ()
+        assert report.blocked_reason == "compensation_draining"
+        assert len(compensation.calls) == 1
+    finally:
+        compensation.release.set()
+        runtime.coordinator._collect_outcomes = original_collect
         runtime.coordinator.close(wait=True)

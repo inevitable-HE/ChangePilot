@@ -710,6 +710,12 @@ class Coordinator:
                 completed=_completed_for_run(completed, run_id),
                 blocked_reason="compensation_recovery_required",
             )
+        if self._has_unpersisted_outcome(run_id):
+            return CoordinationReport(
+                run_id=run_id,
+                completed=_completed_for_run(completed, run_id),
+                blocked_reason="compensation_draining",
+            )
         definition, step_runs = self._load_definition_and_steps(run_id)
         with self._uow_factory() as uow:
             attempts = uow.attempts.list(run_id)
