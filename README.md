@@ -63,6 +63,12 @@ with compensation in the order `service.restore`, then `schema.rollback`.
 Windows PowerShell commands are shown below. In WSL, replace
 `.venv\Scripts\python.exe` with `.venv/bin/python`.
 
+Current verified baseline (2026-07-22):
+
+- 384 tests passed
+- 92% statement coverage (85% required)
+- OpenSpec strict validation passed with zero issues
+
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\test_query_service.py tests\integration\test_order_upgrade_acceptance.py -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
@@ -73,3 +79,5 @@ git diff --check
 
 See `docs/architecture/reliable-workflow-core.md` for package boundaries,
 transaction semantics, recovery decisions, and Phase 1 limitations.
+The detailed verification record is available at
+`docs/superpowers/reports/2026-07-22-establish-reliable-workflow-core-verify.md`.
