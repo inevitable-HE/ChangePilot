@@ -941,7 +941,7 @@ git commit -m "feat: compensate completed workflow effects"
 - Consumes: all domain, application, port, and adapter interfaces from Tasks 1-9.
 - Produces: `WorkflowService.create_run()`, `WorkflowService.cancel_run()`, `ApprovalService.decide()`, `QueryService.get_run()`, `QueryService.list_events()`, the fixed order-upgrade definition, and documented local commands.
 
-- [ ] **Step 1: Write failing public-service and three-path acceptance tests**
+- [x] **Step 1: Write failing public-service and three-path acceptance tests**
 
 ```python
 # tests/integration/test_order_upgrade_acceptance.py
@@ -969,13 +969,13 @@ def test_audit_timeline_is_ordered_and_redacted(runtime) -> None:
     assert "do-not-persist" not in repr(events)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for public-service and order-upgrade acceptance tests**
 
 Run: `python -m pytest tests/unit/test_query_service.py tests/integration/test_order_upgrade_acceptance.py -q`
 
 Expected: FAIL because public application services and the fixed scenario are absent.
 
-- [ ] **Step 3: Implement application views/services and the exact acceptance DAG**
+- [x] **Step 3: Implement application views/services and the exact acceptance DAG**
 
 ```python
 # src/changepilot/workflow/application/services.py
@@ -1000,7 +1000,7 @@ class WorkflowService:
 
 The fixed DAG is `inspect-service` and `inspect-db` to `precheck`, then approved `migrate-schema`, `deploy-v2`, `health-check`, and `smoke-test`. Query views are immutable Pydantic DTOs and never expose repository/domain mutation methods. `list_events(after_sequence)` returns ascending sequence and redacted payloads.
 
-- [ ] **Step 4: Run complete verification and coverage**
+- [x] **Step 4: Run complete verification and coverage**
 
 Run: `python -m pytest -q`
 
@@ -1014,17 +1014,17 @@ Run: `openspec validate establish-reliable-workflow-core --strict --json --no-in
 
 Expected: one valid change, zero issues.
 
-- [ ] **Step 5: Document architecture, local execution, guarantees, and non-goals**
+- [x] **Step 5: Document architecture, local execution, guarantees, and non-goals**
 
 `README.md` must contain installation, migration, test, and fixed-scenario commands. `docs/architecture/reliable-workflow-core.md` must include the package dependency rule, transaction boundaries, recovery decision table, approval binding, compensation semantics, and the explicit statement that the core is Phase 1 of ChangePilot rather than the complete Agent loop.
 
-- [ ] **Step 6: Check off OpenSpec tasks only after matching evidence exists**
+- [x] **Step 6: Check off OpenSpec tasks only after matching evidence exists**
 
 Run: `python -m pytest -q`
 
 Expected: PASS immediately before changing checkboxes. Change all 17 task markers in `openspec/changes/establish-reliable-workflow-core/tasks.md` from `[ ]` to `[x]` only when their linked tests or documentation exist.
 
-- [ ] **Step 7: Commit Task 10**
+- [x] **Step 7: Commit Task 10**
 
 ```bash
 git add src/changepilot/workflow/application/services.py tests/support/order_upgrade.py tests/integration/test_order_upgrade_acceptance.py tests/unit/test_query_service.py README.md docs/architecture/reliable-workflow-core.md openspec/changes/establish-reliable-workflow-core/tasks.md
@@ -1033,8 +1033,8 @@ git commit -m "feat: complete reliable workflow core acceptance"
 
 ## 最终构建门禁
 
-- [ ] Run `python -m pytest -q` and confirm zero failures.
-- [ ] Run `python -m pytest --cov=changepilot.workflow --cov-report=term-missing --cov-fail-under=85 -q` and confirm the threshold passes.
-- [ ] Run `openspec validate establish-reliable-workflow-core --strict --json --no-interactive` and confirm zero issues.
-- [ ] Run `git status --short` and account for every remaining change without touching ignored personal files.
-- [ ] Request the configured code review before `comet guard establish-reliable-workflow-core build --apply`.
+- [x] Run `python -m pytest -q` and confirm zero failures (384 passed).
+- [x] Run `python -m pytest --cov=changepilot.workflow --cov-report=term-missing --cov-fail-under=85 -q` and confirm the threshold passes (92.42%).
+- [x] Run `openspec validate establish-reliable-workflow-core --strict --json --no-interactive` and confirm zero issues.
+- [x] Run `git status --short` and account for every remaining change without touching ignored personal files.
+- [x] Skip automatic code review per user-directed `review_mode: off`; defer one unified hardening review until project completion.
