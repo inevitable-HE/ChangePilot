@@ -81,3 +81,8 @@ See `docs/architecture/reliable-workflow-core.md` for package boundaries,
 transaction semantics, recovery decisions, and Phase 1 limitations.
 The detailed verification record is available at
 `docs/superpowers/reports/2026-07-22-establish-reliable-workflow-core-verify.md`.
+
+## Contributing
+
+Development setup, branch conventions, repository boundaries, and pull request
+expectations are documented in `CONTRIBUTING.md`.

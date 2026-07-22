@@ -1,6 +1,12 @@
-# Local Codex and Comet state
-.codex/settings.local.json
-.comet/current-change.json
+# Local AI-agent tooling and workflow runtime state
+.agents/
+.codex/
+.comet/
+AGENTS.md
+CLAUDE.md
+skills-lock.json
+openspec/changes/**/.comet/
+openspec/changes/**/.comet.yaml
 
 # Personal interview materials
 resume_draft.md
