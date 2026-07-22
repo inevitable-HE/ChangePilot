@@ -728,7 +728,7 @@ git commit -m "feat: coordinate deterministic workflow execution"
 - Consumes: Workflow/step state, Unit of Work, tool descriptor risk, redaction, and coordinator readiness.
 - Produces: `approval_binding_digest()`, `ApprovalService.decide()`, one durable pending approval, stale-decision rejection, rejection cancellation/compensation choice, and coordinator barrier behavior.
 
-- [ ] **Step 1: Write failing binding and barrier tests**
+- [x] **Step 1: Write failing binding and barrier tests**
 
 ```python
 # tests/integration/test_approval_barrier.py
@@ -746,13 +746,13 @@ def test_high_risk_ready_step_stops_new_dispatch_and_survives_restart(runtime_fa
     assert restarted.tools.calls("schema.apply") == []
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for approval binding and durable barrier tests**
 
 Run: `python -m pytest tests/unit/test_approval_binding.py tests/integration/test_approval_barrier.py -q`
 
 Expected: FAIL because approval services and barrier logic are absent.
 
-- [ ] **Step 3: Implement approval snapshot digest, optimistic decisions, and drain-before-barrier behavior**
+- [x] **Step 3: Implement approval snapshot digest, optimistic decisions, and drain-before-barrier behavior**
 
 ```python
 # src/changepilot/workflow/application/approvals.py
@@ -767,13 +767,13 @@ def approval_binding_digest(plan_digest: str, step_id: str, tool_name: str, tool
 
 When any high-risk step becomes ready, stop dispatching new forward work, drain already submitted futures, atomically create the approval request plus event, and transition the run to `waiting_approval`. Decisions require `expected_version`; stale, duplicate, mismatched-digest, or already-decided requests are rejected. Rejection before side effects cancels; rejection after compensable successes starts compensation.
 
-- [ ] **Step 4: Verify GREEN and approval race coverage**
+- [x] **Step 4: Verify GREEN and approval race coverage**
 
 Run: `python -m pytest tests/unit/test_approval_binding.py tests/integration/test_approval_barrier.py -q`
 
 Expected: PASS for restart, approval, rejection, changed arguments, changed tool version, duplicate decisions, and optimistic-lock races.
 
-- [ ] **Step 5: Commit Task 7**
+- [x] **Step 5: Commit Task 7**
 
 ```bash
 git add src/changepilot/workflow/application/approvals.py src/changepilot/workflow/application/coordinator.py tests/unit/test_approval_binding.py tests/integration/test_approval_barrier.py
