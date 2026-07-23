@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "changepilot"
+version = "0.1.0"
+description = "Reliable workflow core foundations for ChangePilot."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.10,<3",
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.14,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-cov>=6,<7",
+    "hypothesis>=6.120,<7",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

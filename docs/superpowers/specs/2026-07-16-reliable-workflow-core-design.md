@@ -2,6 +2,8 @@
 comet_change: establish-reliable-workflow-core
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-22-establish-reliable-workflow-core
+status: final
 ---
 
 # ChangePilot 可靠工作流内核技术设计

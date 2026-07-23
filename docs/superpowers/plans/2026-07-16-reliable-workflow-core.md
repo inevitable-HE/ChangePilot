@@ -2,31 +2,33 @@
 change: establish-reliable-workflow-core
 design-doc: docs/superpowers/specs/2026-07-16-reliable-workflow-core-design.md
 base-ref: 64eaa1c323836383d78de1310881a446083957d0
+archived-with: 2026-07-22-establish-reliable-workflow-core
 ---
 
-# ChangePilot Reliable Workflow Core Implementation Plan
+# ChangePilot 可靠工作流内核实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供 Agent 实施者使用：** 必须加载 `subagent-driven-development`（推荐）或 `executing-plans`，逐任务执行本计划。所有步骤使用 checkbox（`- [ ]`）跟踪。
 
-**Goal:** Build the deterministic, durable workflow execution core that validates static DAGs, coordinates registered tools, pauses for approval, survives process interruption, retries safely, compensates completed side effects, and exposes a redacted audit timeline.
+**目标：** 构建确定、持久的工作流执行内核，完成静态 DAG 校验、注册工具调度、人工审批暂停、进程中断恢复、安全重试、已完成副作用补偿和脱敏审计时间线查询。
 
-**Architecture:** Keep immutable workflow definitions and pure state machines in `domain`, orchestration in `application`, stable interfaces in `ports`, and memory/SQLite/Fake Tool implementations in `adapters`. The coordinator is the only database writer; tool workers return immutable outcomes. Every durable state transition and its audit event share one Unit of Work, while external tool calls occur between a start transaction and a result transaction.
+**架构：** `domain` 保存不可变工作流定义与纯状态机，`application` 负责协调，`ports` 定义稳定接口，`adapters` 提供内存、SQLite 和 Fake Tool 实现。协调器是唯一数据库写入者，工具 Worker 只返回不可变执行结果。每次持久状态转换与审计事件共用一个 Unit of Work，外部工具调用位于开始事务和结果事务之间。
 
-**Tech Stack:** Python 3.12, Pydantic v2, SQLAlchemy 2.0 Core, Alembic, pytest, pytest-cov, Hypothesis.
+**技术栈：** Python 3.12、Pydantic v2、SQLAlchemy 2.0 Core、Alembic、pytest、pytest-cov、Hypothesis。
 
-## Global Constraints
+## 全局约束
 
-- OpenSpec under `openspec/changes/establish-reliable-workflow-core/` is the canonical behavioral specification.
-- V1 accepts static DAGs only: no conditional routing, dynamic steps, loops, LLM calls, RAG, Web UI, Docker, PostgreSQL, distributed workers, multi-tenancy, or production connections.
-- A workflow contains at most 100 steps and 1000 dependency edges.
-- Tool concurrency defaults to 4 and must reject values above 16.
-- Retry policy defaults to 3 attempts and must reject values above 10.
-- SQLite runs with foreign keys, WAL, and a 5-second busy timeout under a single coordinator.
-- Secrets are represented by `SecretRef`; persisted arguments, results, errors, events, and approval snapshots must be redacted.
-- External side effects use at-least-once scheduling plus stable logical idempotency keys; the project must not claim exactly-once behavior.
-- Core tests must run without DeepSeek, network access, Docker, PostgreSQL, or real service/database connections on Windows and WSL2.
+- `openspec/changes/establish-reliable-workflow-core/` 下的 OpenSpec 是行为规范的唯一事实源。
+- V1 只接受静态 DAG，不实现条件路由、动态步骤、循环、LLM 调用、RAG、Web UI、Docker、PostgreSQL、分布式 Worker、多租户或生产连接。
+- 单个工作流最多包含 100 个步骤和 1000 条依赖边。
+- 工具并发默认值为 4，必须拒绝超过 16 的配置。
+- 重试策略默认最多尝试 3 次，必须拒绝超过 10 的配置。
+- SQLite 在单协调器模式下启用外键、WAL 和 5 秒 busy timeout。
+- 密钥使用 `SecretRef` 表示；持久化参数、结果、错误、事件和审批快照必须脱敏。
+- 外部副作用采用至少一次调度和稳定逻辑幂等键，不得宣称 exactly-once。
+- 核心测试必须能在 Windows 与 WSL2 上脱离 DeepSeek、网络、Docker、PostgreSQL 和真实服务或数据库连接运行。
+- Windows 开发环境使用 `C:\\Users\\kevinyuan\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe -m venv .venv` 创建 Python 3.12 虚拟环境；后续计划中的 `python` 命令均由 `.venv\\Scripts\\python.exe` 执行。
 
-## Planned File Structure
+## 计划文件结构
 
 ```text
 pyproject.toml
@@ -77,9 +79,9 @@ tests/
 `-- support/
 ```
 
-## OpenSpec Coverage
+## OpenSpec 覆盖关系
 
-| OpenSpec task | Plan task |
+| OpenSpec 任务 | 计划任务 |
 | --- | --- |
 | 1.1 project baseline | 1 |
 | 1.2 domain models | 1, 2 |
@@ -101,7 +103,7 @@ tests/
 
 ---
 
-### Task 1: Project Baseline and Immutable Workflow Definitions
+### Task 1：项目基线与不可变工作流定义
 
 **Files:**
 - Create: `pyproject.toml`
@@ -118,7 +120,7 @@ tests/
 - Produces: `WorkflowDefinition.from_mapping(payload, registry)`, `WorkflowDefinition.digest`, `StepDefinition`, `RetryPolicy`, `DefinitionValidationError`, and the read-only `ToolCatalog` protocol.
 - Consumes: no project interfaces.
 
-- [ ] **Step 1: Create the Python test baseline and write failing definition tests**
+- [x] **Step 1: Create the Python test baseline and write failing definition tests**
 
 ```toml
 # pyproject.toml
@@ -177,15 +179,19 @@ def test_equivalent_payloads_have_the_same_digest() -> None:
     assert WorkflowDefinition.from_mapping(first, Catalog()).digest == WorkflowDefinition.from_mapping(second, Catalog()).digest
 ```
 
-- [ ] **Step 2: Install the editable project and verify RED**
+- [x] **Step 2: Install the editable project and verify RED**
 
-Run: `python -m pip install -e ".[dev]"`
+Run: `C:\Users\kevinyuan\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv`
 
-Run: `python -m pytest tests/unit/test_definition_validation.py -q`
+Expected: 创建使用 Python 3.12 的 `.venv`。
+
+Run: `.venv\Scripts\python.exe -m pip install -e ".[dev]"`
+
+Run: `.venv\Scripts\python.exe -m pytest tests/unit/test_definition_validation.py -q`
 
 Expected: FAIL during import because `changepilot.workflow.domain.definitions` does not exist.
 
-- [ ] **Step 3: Implement immutable definitions, canonical digest, limits, tool checks, and Kahn cycle validation**
+- [x] **Step 3: Implement immutable definitions, canonical digest, limits, tool checks, and Kahn cycle validation**
 
 ```python
 # src/changepilot/workflow/domain/definitions.py
@@ -247,20 +253,20 @@ class WorkflowDefinition:
 
 Implement `validate_definition_payload()` in `validation.py` so it rejects duplicate IDs, missing dependencies, unregistered tool versions, invalid arguments, more than 100 steps, more than 1000 edges, retry counts outside `1..10`, and any cycle. It must return a newly allocated canonical dictionary with explicit defaults and steps sorted by ID.
 
-- [ ] **Step 4: Verify GREEN and full unit baseline**
+- [x] **Step 4: Verify GREEN and full unit baseline**
 
 Run: `python -m pytest tests/unit/test_definition_validation.py -q`
 
 Expected: PASS, including cycle rejection and stable digest.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add pyproject.toml src/changepilot tests/unit/test_definition_validation.py
 git commit -m "feat: validate immutable workflow definitions"
 ```
 
-### Task 2: Explicit Run and Step State Machines
+### Task 2：显式运行与步骤状态机
 
 **Files:**
 - Create: `src/changepilot/workflow/domain/states.py`
@@ -273,7 +279,7 @@ git commit -m "feat: validate immutable workflow definitions"
 - Consumes: `WorkflowDefinition.digest` from Task 1.
 - Produces: `RunState`, `StepState`, `WorkflowRun.transition()`, `StepRun.transition()`, `AuditEvent`, `ErrorClass`, and `InvalidTransition`.
 
-- [ ] **Step 1: Write failing transition-table tests**
+- [x] **Step 1: Write failing transition-table tests**
 
 ```python
 # tests/unit/test_state_machines.py
@@ -299,13 +305,13 @@ def test_transition_returns_new_revision_and_event() -> None:
     assert event.event_type == "run.state_changed"
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for transition-table tests**
 
 Run: `python -m pytest tests/unit/test_state_machines.py -q`
 
 Expected: FAIL because the state modules do not exist.
 
-- [ ] **Step 3: Implement enums, immutable run records, transition tables, and typed failures**
+- [x] **Step 3: Implement enums, immutable run records, transition tables, and typed failures**
 
 ```python
 # src/changepilot/workflow/domain/states.py
@@ -337,20 +343,20 @@ class StepState(StrEnum):
 
 Define explicit `dict[State, frozenset[State]]` transition tables in `runs.py`. Use `dataclasses.replace` to return a new aggregate plus an `AuditEvent`; increment run revision exactly once for each accepted run transition. Reject every transition absent from the table.
 
-- [ ] **Step 4: Verify GREEN and exhaustive invalid-transition coverage**
+- [x] **Step 4: Verify GREEN and exhaustive invalid-transition coverage**
 
 Run: `python -m pytest tests/unit/test_state_machines.py -q`
 
 Expected: PASS for every accepted edge and every rejected edge generated by parametrized tests.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add src/changepilot/workflow/domain tests/unit/test_state_machines.py
 git commit -m "feat: add deterministic workflow state machines"
 ```
 
-### Task 3: Persistence Ports, Memory Unit of Work, and Atomic Events
+### Task 3：持久化端口、内存 Unit of Work 与事件原子性
 
 **Files:**
 - Create: `src/changepilot/workflow/ports/persistence.py`
@@ -366,7 +372,7 @@ git commit -m "feat: add deterministic workflow state machines"
 - Consumes: domain definitions, runs, steps, attempts, approvals, and events.
 - Produces: `UnitOfWork`, repository protocols, `MemoryUnitOfWork`, optimistic revision checks, monotonic event sequences, and rollback semantics used by all application services.
 
-- [ ] **Step 1: Write the failing reusable Unit of Work contract**
+- [x] **Step 1: Write the failing reusable Unit of Work contract**
 
 ```python
 # tests/contract/uow_contract.py
@@ -406,13 +412,13 @@ def test_memory_state_and_event_are_atomic() -> None:
     assert_state_and_event_are_atomic(lambda **kwargs: MemoryUnitOfWork(store, **kwargs))
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for the memory Unit of Work contract**
 
 Run: `python -m pytest tests/contract/test_memory_uow.py -q`
 
 Expected: FAIL because persistence ports and memory adapter do not exist.
 
-- [ ] **Step 3: Implement protocols and copy-on-write memory transactions**
+- [x] **Step 3: Implement protocols and copy-on-write memory transactions**
 
 ```python
 # src/changepilot/workflow/ports/persistence.py
@@ -435,20 +441,20 @@ class UnitOfWork(Protocol):
 
 `MemoryUnitOfWork` must clone committed dictionaries at entry and swap them into `MemoryStore` only after all staged validations and event appends succeed. Allocate event sequence from the transaction snapshot. `save(..., expected_revision)` raises `OptimisticLockError` if the committed revision differs.
 
-- [ ] **Step 4: Verify GREEN and repository contract tests**
+- [x] **Step 4: Verify GREEN and repository contract tests**
 
 Run: `python -m pytest tests/contract/test_memory_uow.py -q`
 
 Expected: PASS for commit, rollback, optimistic locking, approval uniqueness, attempt uniqueness, monotonic sequence, and state/event atomicity.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add src/changepilot/workflow/ports src/changepilot/workflow/adapters tests/contract
 git commit -m "feat: add transactional persistence ports"
 ```
 
-### Task 4: SQLite Schema, Alembic Migration, and Contract Adapter
+### Task 4：SQLite Schema、Alembic 迁移与契约适配器
 
 **Files:**
 - Create: `alembic.ini`
@@ -463,7 +469,7 @@ git commit -m "feat: add transactional persistence ports"
 - Consumes: `UnitOfWork` and repository behavior from Task 3.
 - Produces: `create_sqlite_engine(path)`, `SQLiteUnitOfWork`, and a migration containing definitions, runs, steps, attempts, approvals, and events.
 
-- [ ] **Step 1: Write failing SQLite contract and connection tests**
+- [x] **Step 1: Write failing SQLite contract and connection tests**
 
 ```python
 # tests/integration/test_sqlite_configuration.py
@@ -482,13 +488,13 @@ def test_sqlite_enables_required_pragmas(tmp_path) -> None:
 
 `tests/contract/test_sqlite_uow.py` must invoke every function from `uow_contract.py` against a migrated temporary database.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for SQLite contracts and connection configuration**
 
 Run: `python -m pytest tests/contract/test_sqlite_uow.py tests/integration/test_sqlite_configuration.py -q`
 
 Expected: FAIL because the SQLite adapter and migration do not exist.
 
-- [ ] **Step 3: Implement SQLAlchemy Core tables, migration, engine events, and transactional repositories**
+- [x] **Step 3: Implement SQLAlchemy Core tables, migration, engine events, and transactional repositories**
 
 ```python
 # src/changepilot/workflow/adapters/persistence/sqlite.py
@@ -515,7 +521,7 @@ def create_sqlite_engine(path: Path) -> Engine:
 
 Use SQLAlchemy Core tables with unique constraints for `(run_id, step_id)`, `(run_id, step_id, attempt_no, phase)`, `(run_id, sequence)`, and one effective pending approval per run. `SQLiteUnitOfWork` owns one connection and transaction; event append failure must roll back preceding state writes.
 
-- [ ] **Step 4: Apply migration and verify GREEN**
+- [x] **Step 4: Apply migration and verify GREEN**
 
 Run: `python -m alembic upgrade head`
 
@@ -523,14 +529,14 @@ Run: `python -m pytest tests/contract/test_sqlite_uow.py tests/integration/test_
 
 Expected: PASS with the same repository behavior as memory and all three PRAGMAs enabled.
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```bash
 git add alembic.ini alembic src/changepilot/workflow/adapters/persistence tests/contract/test_sqlite_uow.py tests/integration/test_sqlite_configuration.py
 git commit -m "feat: persist workflow runtime in sqlite"
 ```
 
-### Task 5: Tool Registry, Boundary Schemas, Redaction, and Idempotency Keys
+### Task 5：工具注册、边界 Schema、脱敏与幂等键
 
 **Files:**
 - Modify: `src/changepilot/workflow/ports/tools.py`
@@ -545,7 +551,7 @@ git commit -m "feat: persist workflow runtime in sqlite"
 - Consumes: definition-time `ToolCatalog` from Task 1.
 - Produces: `ToolDescriptor`, `Tool`, `ToolRegistry`, `ToolExecutionContext`, `ToolResult`, `RecoveryResult`, `SecretRef`, `redact()`, and `logical_idempotency_key()`.
 
-- [ ] **Step 1: Write failing registration, schema, secret, and key tests**
+- [x] **Step 1: Write failing registration, schema, secret, and key tests**
 
 ```python
 # tests/unit/test_idempotency.py
@@ -575,13 +581,13 @@ def test_redacts_declared_paths_and_secret_references() -> None:
     assert redact(payload, sensitive_paths={"token"}) == {"token": "[REDACTED]", "nested": {"password": {"provider": "env", "key": "[REDACTED]"}}}
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for tool boundary, redaction, and idempotency tests**
 
 Run: `python -m pytest tests/unit/test_tool_registry.py tests/unit/test_redaction.py tests/unit/test_idempotency.py -q`
 
 Expected: FAIL because tool boundary types are not implemented.
 
-- [ ] **Step 3: Implement typed descriptors, explicit registry, recursive redaction, fake ledger, and SHA-256 keys**
+- [x] **Step 3: Implement typed descriptors, explicit registry, recursive redaction, fake ledger, and SHA-256 keys**
 
 ```python
 # src/changepilot/workflow/ports/tools.py
@@ -615,20 +621,20 @@ class Tool(Protocol):
 
 Reject duplicate `(name, version)`, descriptor timeouts less than or equal to zero, undeclared arguments, and registration of output models that are not Pydantic models. Fake Tool must use an independent JSON-lines ledger keyed by the logical idempotency key so process tests can count external effects.
 
-- [ ] **Step 4: Verify GREEN and secret leakage scan tests**
+- [x] **Step 4: Verify GREEN and secret leakage scan tests**
 
 Run: `python -m pytest tests/unit/test_tool_registry.py tests/unit/test_redaction.py tests/unit/test_idempotency.py -q`
 
 Expected: PASS; serialized test events and exceptions contain neither `plain` nor `DB_PASSWORD`.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```bash
 git add src/changepilot/workflow/ports/tools.py src/changepilot/workflow/application/tooling.py src/changepilot/workflow/adapters/tools tests/unit/test_tool_registry.py tests/unit/test_redaction.py tests/unit/test_idempotency.py
 git commit -m "feat: add safe versioned tool contracts"
 ```
 
-### Task 6: Deterministic Scheduler, Attempts, Retry Policy, and Coordinator
+### Task 6：确定性调度器、执行尝试、重试策略与协调器
 
 **Files:**
 - Create: `src/changepilot/workflow/application/scheduler.py`
@@ -641,7 +647,7 @@ git commit -m "feat: add safe versioned tool contracts"
 - Consumes: state machines, Unit of Work, Tool Registry, stable keys, `Clock`, and `IdentifierFactory`.
 - Produces: `ready_steps(definition, step_runs)`, `ExecutionOutcome`, `CoordinationReport`, and `Coordinator.run_once()`.
 
-- [ ] **Step 1: Write failing deterministic scheduling and retry tests**
+- [x] **Step 1: Write failing deterministic scheduling and retry tests**
 
 ```python
 # tests/unit/test_scheduler.py
@@ -665,13 +671,13 @@ def test_retryable_failure_creates_new_attempt_with_same_key(runtime) -> None:
     assert attempts[0].idempotency_key == attempts[1].idempotency_key
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for deterministic scheduling and coordinator retries**
 
 Run: `python -m pytest tests/unit/test_scheduler.py tests/integration/test_coordinator_retry.py -q`
 
 Expected: FAIL because scheduler and coordinator are absent.
 
-- [ ] **Step 3: Implement stable readiness, bounded executor, two-transaction calls, and classified retries**
+- [x] **Step 3: Implement stable readiness, bounded executor, two-transaction calls, and classified retries**
 
 ```python
 # src/changepilot/workflow/application/coordinator.py
@@ -699,20 +705,20 @@ class CoordinationReport:
 
 `ready_steps()` must sort by topological depth then step ID. `Coordinator` validates concurrency in `1..16`, is the only database writer, writes `running + attempt + start event` before submitting a tool, and persists an `ExecutionOutcome` in a second Unit of Work. Worker functions receive immutable inputs and never receive a repository. Retryable errors enter `retry_wait` with `next_attempt_at`; permanent errors fail immediately; exhausted retries trigger the run failure policy. Use injected `FakeClock` in tests and never sleep.
 
-- [ ] **Step 4: Verify GREEN, concurrency bound, and no-stuck invariant**
+- [x] **Step 4: Verify GREEN, concurrency bound, and no-stuck invariant**
 
 Run: `python -m pytest tests/unit/test_scheduler.py tests/integration/test_coordinator_retry.py -q`
 
 Expected: PASS for stable order, dependency gating, maximum worker capacity, retry timing, permanent failure, and internal consistency failure when a nonterminal run has no ready/in-flight work.
 
-- [ ] **Step 5: Commit Task 6**
+- [x] **Step 5: Commit Task 6**
 
 ```bash
 git add src/changepilot/workflow/application tests/unit/test_scheduler.py tests/integration/test_coordinator_retry.py tests/support
 git commit -m "feat: coordinate deterministic workflow execution"
 ```
 
-### Task 7: Durable Global Approval Barrier
+### Task 7：持久化全局审批屏障
 
 **Files:**
 - Create: `src/changepilot/workflow/application/approvals.py`
@@ -723,7 +729,7 @@ git commit -m "feat: coordinate deterministic workflow execution"
 - Consumes: Workflow/step state, Unit of Work, tool descriptor risk, redaction, and coordinator readiness.
 - Produces: `approval_binding_digest()`, `ApprovalService.decide()`, one durable pending approval, stale-decision rejection, rejection cancellation/compensation choice, and coordinator barrier behavior.
 
-- [ ] **Step 1: Write failing binding and barrier tests**
+- [x] **Step 1: Write failing binding and barrier tests**
 
 ```python
 # tests/integration/test_approval_barrier.py
@@ -741,13 +747,13 @@ def test_high_risk_ready_step_stops_new_dispatch_and_survives_restart(runtime_fa
     assert restarted.tools.calls("schema.apply") == []
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for approval binding and durable barrier tests**
 
 Run: `python -m pytest tests/unit/test_approval_binding.py tests/integration/test_approval_barrier.py -q`
 
 Expected: FAIL because approval services and barrier logic are absent.
 
-- [ ] **Step 3: Implement approval snapshot digest, optimistic decisions, and drain-before-barrier behavior**
+- [x] **Step 3: Implement approval snapshot digest, optimistic decisions, and drain-before-barrier behavior**
 
 ```python
 # src/changepilot/workflow/application/approvals.py
@@ -762,20 +768,20 @@ def approval_binding_digest(plan_digest: str, step_id: str, tool_name: str, tool
 
 When any high-risk step becomes ready, stop dispatching new forward work, drain already submitted futures, atomically create the approval request plus event, and transition the run to `waiting_approval`. Decisions require `expected_version`; stale, duplicate, mismatched-digest, or already-decided requests are rejected. Rejection before side effects cancels; rejection after compensable successes starts compensation.
 
-- [ ] **Step 4: Verify GREEN and approval race coverage**
+- [x] **Step 4: Verify GREEN and approval race coverage**
 
 Run: `python -m pytest tests/unit/test_approval_binding.py tests/integration/test_approval_barrier.py -q`
 
 Expected: PASS for restart, approval, rejection, changed arguments, changed tool version, duplicate decisions, and optimistic-lock races.
 
-- [ ] **Step 5: Commit Task 7**
+- [x] **Step 5: Commit Task 7**
 
 ```bash
 git add src/changepilot/workflow/application/approvals.py src/changepilot/workflow/application/coordinator.py tests/unit/test_approval_binding.py tests/integration/test_approval_barrier.py
 git commit -m "feat: enforce durable approval barriers"
 ```
 
-### Task 8: Crash Recovery, Probe Semantics, and Unknown Results
+### Task 8：崩溃恢复、探测语义与未知结果
 
 **Files:**
 - Create: `src/changepilot/workflow/application/recovery.py`
@@ -787,7 +793,7 @@ git commit -m "feat: enforce durable approval barriers"
 - Consumes: persisted incomplete attempts, tool idempotency capability, Tool.probe, coordinator, SQLite adapter, and Fake Tool ledger.
 - Produces: `RecoveryService.recover_nonterminal_runs()`, probe-first recovery, result-unknown handling, and subprocess fault injection points.
 
-- [ ] **Step 1: Write failing subprocess recovery test for side-effect-before-result-commit**
+- [x] **Step 1: Write failing subprocess recovery test for side-effect-before-result-commit**
 
 ```python
 # tests/process/test_process_recovery.py
@@ -808,13 +814,13 @@ def test_restart_probes_existing_effect_without_repeating_it(tmp_path) -> None:
     assert len([item for item in effects if item["step_id"] == "migrate-schema"]) == 1
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for subprocess crash recovery tests**
 
 Run: `python -m pytest tests/integration/test_recovery.py tests/process/test_process_recovery.py -q`
 
 Expected: FAIL because startup recovery and the process scenario are absent.
 
-- [ ] **Step 3: Implement recovery scan, incomplete-attempt probe, and manual-intervention rules**
+- [x] **Step 3: Implement recovery scan, incomplete-attempt probe, and manual-intervention rules**
 
 ```python
 # src/changepilot/workflow/application/recovery.py
@@ -834,20 +840,20 @@ class RecoveryService:
 
 For an incomplete running attempt, call `probe` with the persisted logical key before any execute call. Probe outcomes are `applied(result)`, `not_applied`, and `unknown`. Applied persists success; not-applied returns an idempotent step to ready; unknown or a non-probeable tool moves the step and run to `manual_intervention`. Record every recovery choice as a redacted event. Implement fault points before execute, after external ledger write before result commit, while waiting approval, and after compensation effect before commit using `os._exit(91)` only inside the subprocess fixture.
 
-- [ ] **Step 4: Verify GREEN for all restart windows**
+- [x] **Step 4: Verify GREEN for all restart windows**
 
 Run: `python -m pytest tests/integration/test_recovery.py tests/process/test_process_recovery.py -q`
 
 Expected: PASS with one external ledger effect per logical step, the same approval request after restart, and manual intervention for a non-idempotent unknown result.
 
-- [ ] **Step 5: Commit Task 8**
+- [x] **Step 5: Commit Task 8**
 
 ```bash
 git add src/changepilot/workflow/application/recovery.py tests/integration/test_recovery.py tests/process
 git commit -m "feat: recover interrupted workflow attempts"
 ```
 
-### Task 9: Reverse-Dependency Compensation and Failure Preservation
+### Task 9：逆依赖补偿与失败信息保留
 
 **Files:**
 - Modify: `src/changepilot/workflow/application/scheduler.py`
@@ -859,7 +865,7 @@ git commit -m "feat: recover interrupted workflow attempts"
 - Consumes: successful `StepRun.completion_sequence`, DAG dependencies, compensation tool references, attempt phases, and recovery probe semantics.
 - Produces: `compensation_order()`, compensation attempts and keys, `compensated` terminal state, and `manual_intervention` preserving original and compensation failures.
 
-- [ ] **Step 1: Write failing ordering and dual-error tests**
+- [x] **Step 1: Write failing ordering and dual-error tests**
 
 ```python
 # tests/unit/test_compensation_order.py
@@ -885,13 +891,13 @@ def test_compensation_failure_preserves_both_errors(runtime) -> None:
     assert view.compensation_error.code == "service_restore_failed"
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for compensation ordering and dual-error tests**
 
 Run: `python -m pytest tests/unit/test_compensation_order.py tests/integration/test_compensation.py -q`
 
 Expected: FAIL because compensation ordering and coordinator mode are absent.
 
-- [ ] **Step 3: Implement reverse-topological compensation with independent attempts and recovery**
+- [x] **Step 3: Implement reverse-topological compensation with independent attempts and recovery**
 
 ```python
 # src/changepilot/workflow/application/scheduler.py
@@ -908,20 +914,20 @@ def compensation_order(dependencies: dict[str, tuple[str, ...]], completion_sequ
 
 The coordinator enters `compensating` after a forward failure when at least one successful step has a compensation tool. Persist compensation attempts with phase `compensation`, a separate stable key namespace, and the same two-transaction/probe behavior. Never overwrite `original_error`; write `compensation_error` separately. Complete as `compensated` only after every required compensation succeeds.
 
-- [ ] **Step 4: Verify GREEN including interrupted compensation**
+- [x] **Step 4: Verify GREEN including interrupted compensation**
 
 Run: `python -m pytest tests/unit/test_compensation_order.py tests/integration/test_compensation.py tests/process/test_process_recovery.py -q`
 
 Expected: PASS for reverse order, unrelated completion order, no compensation for unsuccessful steps, compensation restart, compensated terminal state, and dual-error manual intervention.
 
-- [ ] **Step 5: Commit Task 9**
+- [x] **Step 5: Commit Task 9**
 
 ```bash
 git add src/changepilot/workflow/application/scheduler.py src/changepilot/workflow/application/coordinator.py tests/unit/test_compensation_order.py tests/integration/test_compensation.py tests/process/test_process_recovery.py
 git commit -m "feat: compensate completed workflow effects"
 ```
 
-### Task 10: Application Services, Order Upgrade Acceptance Scenario, and Documentation
+### Task 10：应用服务、订单升级验收场景与文档
 
 **Files:**
 - Create: `src/changepilot/workflow/application/services.py`
@@ -936,7 +942,7 @@ git commit -m "feat: compensate completed workflow effects"
 - Consumes: all domain, application, port, and adapter interfaces from Tasks 1-9.
 - Produces: `WorkflowService.create_run()`, `WorkflowService.cancel_run()`, `ApprovalService.decide()`, `QueryService.get_run()`, `QueryService.list_events()`, the fixed order-upgrade definition, and documented local commands.
 
-- [ ] **Step 1: Write failing public-service and three-path acceptance tests**
+- [x] **Step 1: Write failing public-service and three-path acceptance tests**
 
 ```python
 # tests/integration/test_order_upgrade_acceptance.py
@@ -964,13 +970,13 @@ def test_audit_timeline_is_ordered_and_redacted(runtime) -> None:
     assert "do-not-persist" not in repr(events)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED for public-service and order-upgrade acceptance tests**
 
 Run: `python -m pytest tests/unit/test_query_service.py tests/integration/test_order_upgrade_acceptance.py -q`
 
 Expected: FAIL because public application services and the fixed scenario are absent.
 
-- [ ] **Step 3: Implement application views/services and the exact acceptance DAG**
+- [x] **Step 3: Implement application views/services and the exact acceptance DAG**
 
 ```python
 # src/changepilot/workflow/application/services.py
@@ -995,7 +1001,7 @@ class WorkflowService:
 
 The fixed DAG is `inspect-service` and `inspect-db` to `precheck`, then approved `migrate-schema`, `deploy-v2`, `health-check`, and `smoke-test`. Query views are immutable Pydantic DTOs and never expose repository/domain mutation methods. `list_events(after_sequence)` returns ascending sequence and redacted payloads.
 
-- [ ] **Step 4: Run complete verification and coverage**
+- [x] **Step 4: Run complete verification and coverage**
 
 Run: `python -m pytest -q`
 
@@ -1009,27 +1015,27 @@ Run: `openspec validate establish-reliable-workflow-core --strict --json --no-in
 
 Expected: one valid change, zero issues.
 
-- [ ] **Step 5: Document architecture, local execution, guarantees, and non-goals**
+- [x] **Step 5: Document architecture, local execution, guarantees, and non-goals**
 
 `README.md` must contain installation, migration, test, and fixed-scenario commands. `docs/architecture/reliable-workflow-core.md` must include the package dependency rule, transaction boundaries, recovery decision table, approval binding, compensation semantics, and the explicit statement that the core is Phase 1 of ChangePilot rather than the complete Agent loop.
 
-- [ ] **Step 6: Check off OpenSpec tasks only after matching evidence exists**
+- [x] **Step 6: Check off OpenSpec tasks only after matching evidence exists**
 
 Run: `python -m pytest -q`
 
 Expected: PASS immediately before changing checkboxes. Change all 17 task markers in `openspec/changes/establish-reliable-workflow-core/tasks.md` from `[ ]` to `[x]` only when their linked tests or documentation exist.
 
-- [ ] **Step 7: Commit Task 10**
+- [x] **Step 7: Commit Task 10**
 
 ```bash
 git add src/changepilot/workflow/application/services.py tests/support/order_upgrade.py tests/integration/test_order_upgrade_acceptance.py tests/unit/test_query_service.py README.md docs/architecture/reliable-workflow-core.md openspec/changes/establish-reliable-workflow-core/tasks.md
 git commit -m "feat: complete reliable workflow core acceptance"
 ```
 
-## Final Build Gate
+## 最终构建门禁
 
-- [ ] Run `python -m pytest -q` and confirm zero failures.
-- [ ] Run `python -m pytest --cov=changepilot.workflow --cov-report=term-missing --cov-fail-under=85 -q` and confirm the threshold passes.
-- [ ] Run `openspec validate establish-reliable-workflow-core --strict --json --no-interactive` and confirm zero issues.
-- [ ] Run `git status --short` and account for every remaining change without touching ignored personal files.
-- [ ] Request the configured code review before `comet guard establish-reliable-workflow-core build --apply`.
+- [x] Run `python -m pytest -q` and confirm zero failures (384 passed).
+- [x] Run `python -m pytest --cov=changepilot.workflow --cov-report=term-missing --cov-fail-under=85 -q` and confirm the threshold passes (92.42%).
+- [x] Run `openspec validate establish-reliable-workflow-core --strict --json --no-interactive` and confirm zero issues.
+- [x] Run `git status --short` and account for every remaining change without touching ignored personal files.
+- [x] Skip automatic code review per user-directed `review_mode: off`; defer one unified hardening review until project completion.
