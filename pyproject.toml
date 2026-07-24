@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "changepilot"
 version = "0.1.0"
-description = "Reliable workflow core foundations for ChangePilot."
+description = "Bounded change-planning agent with a reliable workflow runtime."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10,<3",
@@ -31,3 +31,8 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "live_llm: opt-in test that spends a bounded real model API call",
+]

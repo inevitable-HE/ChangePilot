@@ -7,7 +7,10 @@ from pydantic import ValidationError
 from changepilot.planning.application.retrieval import HybridRetriever
 from changepilot.planning.application.state import PlanningState
 from changepilot.planning.application.validation import PlanValidator
-from changepilot.planning.domain.failures import ModelBudgetExceeded
+from changepilot.planning.domain.failures import (
+    ModelBudgetExceeded,
+    ModelGatewayError,
+)
 from changepilot.planning.domain.models import (
     BudgetExhausted,
     ChangePlan,
@@ -208,6 +211,13 @@ class PlanningNodes:
                     session_id=state["session_id"],
                     calls_used=int(getattr(self._model, "calls_used", 0)),
                     total_tokens=int(getattr(self._model, "total_tokens", 0)),
+                )
+            }
+        except ModelGatewayError as exc:
+            return {
+                "result": PlanningRejected(
+                    session_id=state["session_id"],
+                    errors=(f"model_gateway_error: {exc}",),
                 )
             }
         return {

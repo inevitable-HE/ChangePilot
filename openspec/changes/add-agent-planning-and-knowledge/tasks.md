@@ -24,5 +24,7 @@
 
 - [x] 4.1 将通过校验的结构化计划转换为可靠工作流运行时可执行的 DAG
 - [x] 4.2 建立检索命中、提示注入、信息缺失、计划违规和预算耗尽的固定评测样例
-- [ ] 4.3 增加少量受预算保护的 DeepSeek 集成测试，并使默认测试仅依赖 Mock LLM
-- [ ] 4.4 编写模型配置、知识库更新、离线测试和成本控制说明
+- [x] 4.3 增加少量受预算保护的 DeepSeek 集成测试，并使默认测试仅依赖 Mock LLM
+- [x] 4.4 编写模型配置、知识库更新、离线测试和成本控制说明
+
+<!-- review: dedicated review skill unavailable; manual final correctness and security review completed 2026-07-24 -->

@@ -15,7 +15,10 @@ from changepilot.planning.application.retrieval import HybridRetriever
 from changepilot.planning.application.services import PlanningService
 from changepilot.planning.application.validation import PlanValidator
 from changepilot.planning.domain.knowledge import RunbookDocument
-from changepilot.planning.domain.failures import ModelBudgetExceeded
+from changepilot.planning.domain.failures import (
+    ModelBudgetExceeded,
+    TransientModelError,
+)
 from changepilot.planning.domain.models import (
     ChangePlan,
     ChangeRequest,
@@ -281,3 +284,14 @@ def test_budget_exhaustion_is_a_structured_terminal_result() -> None:
 
     assert result.kind == "budget_exhausted"
     assert harness.model.call_count == 1
+
+
+def test_model_provider_failure_is_a_structured_terminal_result() -> None:
+    harness = _harness([TransientModelError("provider timeout")])
+
+    result = harness.service.start(_complete_request())
+
+    assert result.kind == "planning_rejected"
+    assert result.errors == (
+        "model_gateway_error: provider timeout",
+    )

@@ -4,7 +4,10 @@ import json
 
 from sqlalchemy import select
 
-from changepilot.planning.adapters.knowledge.schema import model_usage
+from changepilot.planning.adapters.knowledge.schema import (
+    model_usage,
+    planning_sessions,
+)
 from changepilot.planning.adapters.knowledge.sqlite import initialize_planning_schema
 from changepilot.planning.adapters.persistence import (
     SQLiteModelCache,
@@ -66,6 +69,11 @@ def test_sqlite_planning_repository_round_trips_plan_and_binding(tmp_path) -> No
     assert repository.get_latest_result("session-1") == result
     assert repository.next_attempt_number("session-1") == 2
     assert repository.next_plan_version("session-1") == 2
+    with engine.connect() as connection:
+        updated_at = connection.execute(
+            select(planning_sessions.c.updated_at)
+        ).scalar_one()
+    assert updated_at != "CURRENT_TIMESTAMP"
     engine.dispose()
 
 

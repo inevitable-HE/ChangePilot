@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 
 from pydantic import TypeAdapter
-from sqlalchemy import Engine, insert, select, update
+from sqlalchemy import Engine, func, insert, select, update
 
 from changepilot.planning.adapters.knowledge.schema import (
     model_cache,
@@ -150,7 +150,7 @@ class SQLitePlanningRepository:
                 .values(
                     request_json=request.model_dump_json(),
                     status="planning",
-                    updated_at="CURRENT_TIMESTAMP",
+                    updated_at=func.current_timestamp(),
                 )
             )
             if result.rowcount != 1:
@@ -199,7 +199,7 @@ class SQLitePlanningRepository:
                 .values(
                     request_json=request.model_dump_json(),
                     status=result.kind,
-                    updated_at="CURRENT_TIMESTAMP",
+                    updated_at=func.current_timestamp(),
                 )
             )
 
@@ -230,7 +230,7 @@ class SQLitePlanningRepository:
                 .values(
                     latest_plan_version=plan.version,
                     status="plan_ready",
-                    updated_at="CURRENT_TIMESTAMP",
+                    updated_at=func.current_timestamp(),
                 )
             )
 
