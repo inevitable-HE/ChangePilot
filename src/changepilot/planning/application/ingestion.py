@@ -4,7 +4,9 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
+import yaml
 from changepilot.planning.domain.failures import KnowledgeError
 from changepilot.planning.domain.knowledge import (
     IngestionResult,
@@ -16,6 +18,7 @@ from changepilot.planning.ports.knowledge import KnowledgeStore
 
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
 @dataclass(slots=True)
@@ -160,6 +163,28 @@ class RunbookIngestionService:
                     break
                 cursor = end - self._overlap_chars
         return tuple(chunks)
+
+
+def load_runbook(path: str | Path) -> RunbookDocument:
+    selected = Path(path)
+    text = selected.read_text(encoding="utf-8")
+    match = _FRONTMATTER.match(text)
+    if match is None:
+        raise KnowledgeError("Runbook requires YAML frontmatter")
+    metadata = yaml.safe_load(match.group(1))
+    if not isinstance(metadata, dict):
+        raise KnowledgeError("Runbook frontmatter must be a mapping")
+    payload = {
+        **metadata,
+        "source": metadata.get("source", selected.as_posix()),
+        "content": text[match.end() :].strip(),
+    }
+    try:
+        return RunbookDocument.model_validate_json(
+            json.dumps(payload, ensure_ascii=False)
+        )
+    except Exception as exc:
+        raise KnowledgeError(f"invalid Runbook metadata: {exc}") from exc
 
 
 def calculate_snapshot(

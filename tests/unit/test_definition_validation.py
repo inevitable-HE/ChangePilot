@@ -152,6 +152,7 @@ def test_project_uses_standard_backend_and_declares_planned_dependencies() -> No
         "alembic>=1.14,<2",
         "langgraph>=1.0,<2",
         "openai>=2.0,<3",
+        "pyyaml>=6.0,<7",
     ]
     assert pyproject["project"]["optional-dependencies"]["retrieval"] == [
         "sentence-transformers>=5.0,<6",
