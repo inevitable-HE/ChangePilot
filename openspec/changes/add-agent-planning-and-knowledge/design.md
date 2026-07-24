@@ -65,8 +65,8 @@ ChangePilot 的输入是用户描述的研发变更目标，而可靠工作流�
 
 这是新增能力。先实现 Mock LLM 和静态 Runbook 检索形成可重复测试，再接入 DeepSeek 和本地混合索引。模型或索引实现更换时保持网关、检索结果和计划 Schema 不变。
 
-## Open Questions
+## Resolved Questions
 
-- 深度设计阶段选择 LangGraph 还是显式应用服务实现有限规划流程。
-- 选择适合 WSL/Windows 的本地嵌入模型与向量索引库。
-- 确定真实 DeepSeek 集成测试的调用预算和执行频率。
+- 使用 LangGraph 编排有限规划流程，领域模型、安全校验和端口保持框架无关。
+- 使用 SQLite FTS5/BM25 与可选 `BAAI/bge-small-zh-v1.5` 形成本地混合检索，不要求 Docker 或独立向量数据库。
+- 真实 DeepSeek 集成测试默认跳过，仅在显式开关下执行一次受调用数和 token 上限保护的冒烟测试。
