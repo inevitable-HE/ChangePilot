@@ -42,7 +42,7 @@ base-ref: 6a1ede224f00718b8dfeb695adba0ef88ce7004c
 - Produces: `ChangeRequest`, `EvidenceRef`, `RetrievedEvidence`, `PlanStep`, `ChangePlan`, `PreparedWorkflow`, `PlanningResult`
 - Produces: `ModelRequest`, `ModelResponse`, `ModelUsage`, `ModelGateway`
 
-- [ ] **Step 1: 添加失败测试，锁定严格且不可变的边界模型**
+- [x] **Step 1: 添加失败测试，锁定严格且不可变的边界模型**
 
 ```python
 def test_change_request_rejects_unknown_fields() -> None:
@@ -61,13 +61,13 @@ def test_plan_digest_is_stable_for_equivalent_content() -> None:
     assert make_plan().content_digest == make_plan().content_digest
 ```
 
-- [ ] **Step 2: 运行测试并确认因规划包不存在而失败**
+- [x] **Step 2: 运行测试并确认因规划包不存在而失败**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_models.py -q`
 
 Expected: FAIL with `ModuleNotFoundError: changepilot.planning`
 
-- [ ] **Step 3: 实现领域模型、可辨识结果联合类型和模型网关协议**
+- [x] **Step 3: 实现领域模型、可辨识结果联合类型和模型网关协议**
 
 ```python
 class PlanningBoundaryModel(BaseModel):
@@ -81,7 +81,7 @@ class ModelGateway(Protocol):
 
 `ChangePlan` 在模型验证后计算规范化 SHA-256；`PlanningResult` 只能是 `ClarificationRequired | PlanReady | PlanningRejected | BudgetExhausted`。
 
-- [ ] **Step 4: 添加 LangGraph、OpenAI SDK 和可选 BGE 依赖**
+- [x] **Step 4: 添加 LangGraph、OpenAI SDK 和可选 BGE 依赖**
 
 ```toml
 dependencies = [
@@ -94,13 +94,13 @@ dependencies = [
 retrieval = ["sentence-transformers>=5.0,<6"]
 ```
 
-- [ ] **Step 5: 运行模型测试和现有定义测试**
+- [x] **Step 5: 运行模型测试和现有定义测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_models.py tests\unit\test_definition_validation.py -q`
 
 Expected: PASS
 
-- [ ] **Step 6: 提交领域契约**
+- [x] **Step 6: 提交领域契约**
 
 ```bash
 git add pyproject.toml src/changepilot/planning tests/planning/unit/test_models.py docs/superpowers openspec/changes/add-agent-planning-and-knowledge
@@ -123,7 +123,7 @@ git commit -m "feat: define planning domain contracts"
 - Consumes: `ModelGateway.generate(ModelRequest) -> ModelResponse`
 - Produces: `BudgetedModelGateway`, `MockModelGateway`, `DeepSeekModelGateway`, `ModelCache`, `UsageRecorder`
 
-- [ ] **Step 1: 写入预算、缓存、瞬时重试和密钥脱敏失败测试**
+- [x] **Step 1: 写入预算、缓存、瞬时重试和密钥脱敏失败测试**
 
 ```python
 def test_budget_stops_before_second_call() -> None:
@@ -143,13 +143,13 @@ def test_same_request_and_knowledge_snapshot_hits_cache() -> None:
     assert inner.call_count == 1
 ```
 
-- [ ] **Step 2: 运行测试并确认缺少网关装饰器**
+- [x] **Step 2: 运行测试并确认缺少网关装饰器**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_model_gateway.py -q`
 
 Expected: FAIL
 
-- [ ] **Step 3: 实现预算、SHA-256 缓存键、有限重试和使用量记录**
+- [x] **Step 3: 实现预算、SHA-256 缓存键、有限重试和使用量记录**
 
 ```python
 class BudgetedModelGateway:
@@ -167,7 +167,7 @@ class BudgetedModelGateway:
 
 重试仅接受超时、429 和 5xx，最多使用配置值；请求摘要和日志不得包含 API Key 或完整 Prompt。
 
-- [ ] **Step 4: 实现可编排 Mock 和 DeepSeek JSON Output 适配器**
+- [x] **Step 4: 实现可编排 Mock 和 DeepSeek JSON Output 适配器**
 
 ```python
 client.chat.completions.create(
@@ -181,13 +181,13 @@ client.chat.completions.create(
 
 DeepSeek 配置从 `CHANGEPILOT_DEEPSEEK_API_KEY`、`CHANGEPILOT_LLM_MODEL` 和 `CHANGEPILOT_LLM_BASE_URL` 读取；构造和异常字符串不得泄露密钥。
 
-- [ ] **Step 5: 运行网关和适配器测试**
+- [x] **Step 5: 运行网关和适配器测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_model_gateway.py tests\planning\unit\test_deepseek_adapter.py -q`
 
 Expected: PASS，且 HTTP 测试使用注入的假客户端
 
-- [ ] **Step 6: 提交模型网关**
+- [x] **Step 6: 提交模型网关**
 
 ```bash
 git add src/changepilot/planning tests/planning/unit
@@ -206,7 +206,7 @@ git commit -m "feat: add budgeted model gateway"
 - Produces: `RunbookDocument`, `KnowledgeChunk`, `KnowledgeSnapshot`, `KnowledgeStore`, `EmbeddingProvider`
 - Produces: `RunbookIngestionService.ingest(document) -> IngestionResult`
 
-- [ ] **Step 1: 写入重复摄取、版本变化和稳定片段 ID 测试**
+- [x] **Step 1: 写入重复摄取、版本变化和稳定片段 ID 测试**
 
 ```python
 def test_identical_document_reuses_existing_chunks() -> None:
@@ -222,13 +222,13 @@ def test_changed_content_creates_new_knowledge_version() -> None:
     assert new.snapshot_digest != old.snapshot_digest
 ```
 
-- [ ] **Step 2: 运行测试并确认摄取服务缺失**
+- [x] **Step 2: 运行测试并确认摄取服务缺失**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_ingestion.py -q`
 
 Expected: FAIL
 
-- [ ] **Step 3: 实现按标题和字符上限分块、内容摘要和可信级别**
+- [x] **Step 3: 实现按标题和字符上限分块、内容摘要和可信级别**
 
 ```python
 chunk_id = sha256(
@@ -238,13 +238,13 @@ chunk_id = sha256(
 
 片段必须保存标题路径、字符偏移、顺序、文档来源和内容摘要。相同身份和摘要不得重复写入或重新生成向量。
 
-- [ ] **Step 4: 运行摄取测试**
+- [x] **Step 4: 运行摄取测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_ingestion.py -q`
 
 Expected: PASS
 
-- [ ] **Step 5: 提交摄取领域**
+- [x] **Step 5: 提交摄取领域**
 
 ```bash
 git add src/changepilot/planning tests/planning/unit/test_ingestion.py
@@ -267,7 +267,7 @@ git commit -m "feat: add versioned runbook ingestion"
 - Consumes: `KnowledgeStore`, `EmbeddingProvider`
 - Produces: `SQLiteKnowledgeStore`, `HybridRetriever`, `BgeEmbeddingProvider`
 
-- [ ] **Step 1: 写入 FTS、向量、RRF、引用和冲突失败测试**
+- [x] **Step 1: 写入 FTS、向量、RRF、引用和冲突失败测试**
 
 ```python
 def test_hybrid_result_keeps_stable_citation() -> None:
@@ -281,17 +281,17 @@ def test_active_policies_with_different_rule_hashes_are_conflicts() -> None:
     assert result.conflicts[0].policy_key == "schema-migration-approval"
 ```
 
-- [ ] **Step 2: 运行测试并确认 SQLite 知识适配器缺失**
+- [x] **Step 2: 运行测试并确认 SQLite 知识适配器缺失**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_hybrid_retrieval.py tests\planning\integration\test_sqlite_knowledge.py -q`
 
 Expected: FAIL
 
-- [ ] **Step 3: 添加知识表和 FTS5 虚拟表迁移**
+- [x] **Step 3: 添加知识表和 FTS5 虚拟表迁移**
 
 迁移创建 `knowledge_documents`、`knowledge_chunks`、`knowledge_chunk_embeddings`、`planning_sessions`、`planning_attempts`、`planning_plans`、`model_usage`、`model_cache`，并通过 raw SQL 创建和删除 `knowledge_fts`。
 
-- [ ] **Step 4: 实现 BM25、精确余弦和 RRF**
+- [x] **Step 4: 实现 BM25、精确余弦和 RRF**
 
 ```python
 def reciprocal_rank_fusion(
@@ -306,13 +306,13 @@ def reciprocal_rank_fusion(
 
 向量保存模型 ID 和维度；BGE 适配器延迟导入 `sentence_transformers`，缺少可选依赖时返回清晰配置错误。
 
-- [ ] **Step 5: 运行迁移与检索测试**
+- [x] **Step 5: 运行迁移与检索测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_hybrid_retrieval.py tests\planning\integration\test_sqlite_knowledge.py tests\contract\test_sqlite_uow.py -q`
 
 Expected: PASS
 
-- [ ] **Step 6: 提交知识存储和检索**
+- [x] **Step 6: 提交知识存储和检索**
 
 ```bash
 git add alembic src/changepilot tests/planning
@@ -332,7 +332,7 @@ git commit -m "feat: add hybrid runbook retrieval"
 - Produces: `PlanningToolPolicy`, `PlanValidator.validate(plan, context) -> ValidationReport`
 - Produces: `WorkflowDefinitionMapper.prepare(plan, registry) -> PreparedWorkflow`
 
-- [ ] **Step 1: 写入未知工具、循环、风险降级、补偿和证据测试**
+- [x] **Step 1: 写入未知工具、循环、风险降级、补偿和证据测试**
 
 ```python
 @pytest.mark.parametrize(
@@ -351,17 +351,17 @@ def test_policy_violation_is_not_repairable(mutator, code) -> None:
     assert report.errors[0].repairable is False
 ```
 
-- [ ] **Step 2: 运行校验测试并确认失败**
+- [x] **Step 2: 运行校验测试并确认失败**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_plan_validation.py tests\planning\unit\test_workflow_mapping.py -q`
 
 Expected: FAIL
 
-- [ ] **Step 3: 实现固定顺序的确定性校验**
+- [x] **Step 3: 实现固定顺序的确定性校验**
 
 最终风险取模型风险、`ToolDescriptor.risk` 和 `PlanningToolPolicy.minimum_risk` 中最高值。高风险强制审批；策略要求补偿时必须引用已注册补偿工具。引用必须存在于当前知识快照且满足最低可信级别。
 
-- [ ] **Step 4: 映射并调用第一阶段定义校验**
+- [x] **Step 4: 映射并调用第一阶段定义校验**
 
 ```python
 definition = WorkflowDefinition.from_mapping(payload, registry)
@@ -376,13 +376,13 @@ return PreparedWorkflow(
 )
 ```
 
-- [ ] **Step 5: 运行规划校验和现有工具注册测试**
+- [x] **Step 5: 运行规划校验和现有工具注册测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\unit\test_plan_validation.py tests\planning\unit\test_workflow_mapping.py tests\unit\test_tool_registry.py -q`
 
 Expected: PASS
 
-- [ ] **Step 6: 提交安全校验和映射**
+- [x] **Step 6: 提交安全校验和映射**
 
 ```bash
 git add src/changepilot/planning tests/planning/unit
@@ -404,7 +404,7 @@ git commit -m "feat: validate and prepare change plans"
 - Consumes: model gateway、retriever、validator、mapper、planning repository
 - Produces: `build_planning_graph(dependencies)`, `PlanningService.start()`, `PlanningService.answer()`, `PlanningService.prepare_workflow()`
 
-- [ ] **Step 1: 写入澄清、成功、一次修复、拒绝和预算耗尽测试**
+- [x] **Step 1: 写入澄清、成功、一次修复、拒绝和预算耗尽测试**
 
 ```python
 def test_missing_target_version_returns_clarification_without_model_call() -> None:
@@ -420,13 +420,13 @@ def test_schema_error_is_repaired_only_once() -> None:
     assert model.call_count == 2
 ```
 
-- [ ] **Step 2: 运行图测试并确认失败**
+- [x] **Step 2: 运行图测试并确认失败**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\integration\test_planning_graph.py -q`
 
 Expected: FAIL
 
-- [ ] **Step 3: 实现 TypedDict 状态、节点和条件边**
+- [x] **Step 3: 实现 TypedDict 状态、节点和条件边**
 
 ```python
 builder = StateGraph(PlanningState)
@@ -440,17 +440,17 @@ builder.add_edge("repair_plan", "validate_repaired_plan")
 
 图中不注册执行工具，不配置开放循环，也不启用 LangGraph checkpointer。
 
-- [ ] **Step 4: 保存会话、澄清、尝试和计划版本**
+- [x] **Step 4: 保存会话、澄清、尝试和计划版本**
 
 `PlanningService.answer()` 必须创建新尝试和新计划版本；旧计划状态改为不可提交。`prepare_workflow()` 重新核对知识快照、工具策略版本和最新计划版本。
 
-- [ ] **Step 5: 运行规划图和知识失效测试**
+- [x] **Step 5: 运行规划图和知识失效测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\integration\test_planning_graph.py tests\planning\integration\test_plan_freshness.py -q`
 
 Expected: PASS
 
-- [ ] **Step 6: 提交规划 Agent**
+- [x] **Step 6: 提交规划 Agent**
 
 ```bash
 git add src/changepilot/planning tests/planning/integration
@@ -471,7 +471,7 @@ git commit -m "feat: add bounded planning agent"
 - Consumes: `PlanningService`, `PreparedWorkflow`, existing `WorkflowService`
 - Produces: 可重复的自然语言到审批屏障验收路径
 
-- [ ] **Step 1: 写入端到端失败测试**
+- [x] **Step 1: 写入端到端失败测试**
 
 ```python
 def test_order_upgrade_plan_reaches_runtime_approval_barrier(tmp_path) -> None:
@@ -484,24 +484,24 @@ def test_order_upgrade_plan_reaches_runtime_approval_barrier(tmp_path) -> None:
     assert runtime.query.get_run(run_id).pending_approval.step_id == "migrate-schema"
 ```
 
-- [ ] **Step 2: 添加包含来源、版本、可信级别和补偿规范的示例 Runbook**
+- [x] **Step 2: 添加包含来源、版本、可信级别和补偿规范的示例 Runbook**
 
 每份文档使用项目约定的元数据头，订单升级文档引用迁移、部署、健康检查和回滚要求。
 
-- [ ] **Step 3: 添加 Prompt 注入文档并验证其不能绕过审批**
+- [x] **Step 3: 添加 Prompt 注入文档并验证其不能绕过审批**
 
 ```python
 assert planning.start(request_with_injected_runbook()).kind == "planning_rejected"
 assert model_tools_executed == []
 ```
 
-- [ ] **Step 4: 运行端到端和安全测试**
+- [x] **Step 4: 运行端到端和安全测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning\acceptance tests\planning\security -q`
 
 Expected: PASS
 
-- [ ] **Step 5: 提交验收场景**
+- [x] **Step 5: 提交验收场景**
 
 ```bash
 git add examples tests/planning
@@ -519,7 +519,7 @@ git commit -m "test: add planning agent acceptance scenario"
 **Interfaces:**
 - Produces: 安装、知识更新、Mock 演示、DeepSeek 配置、成本控制和验证说明
 
-- [ ] **Step 1: 添加默认跳过的真实 DeepSeek 冒烟测试**
+- [x] **Step 1: 添加默认跳过的真实 DeepSeek 冒烟测试**
 
 ```python
 pytestmark = pytest.mark.skipif(
@@ -530,7 +530,7 @@ pytestmark = pytest.mark.skipif(
 
 测试最多调用一次，限制输出 token；缺少 API Key 时跳过，不能回退到无限重试。
 
-- [ ] **Step 2: 更新 README 和架构文档**
+- [x] **Step 2: 更新 README 和架构文档**
 
 文档必须包含：
 
@@ -541,13 +541,13 @@ pytestmark = pytest.mark.skipif(
 - LangGraph 与第一阶段内核职责边界
 - 默认测试不会消耗 API 额度
 
-- [ ] **Step 3: 运行规划模块定向测试**
+- [x] **Step 3: 运行规划模块定向测试**
 
 Run: `.venv\Scripts\python.exe -m pytest tests\planning -q -p no:cacheprovider`
 
 Expected: PASS，live 测试为 skipped
 
-- [ ] **Step 4: 运行全量测试和覆盖率**
+- [x] **Step 4: 运行全量测试和覆盖率**
 
 Run: `.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider`
 
@@ -557,7 +557,7 @@ Run: `.venv\Scripts\python.exe -m pytest --cov=changepilot --cov-report=term-mis
 
 Expected: PASS，statement coverage >= 85%
 
-- [ ] **Step 5: 运行迁移、OpenSpec 和差异校验**
+- [x] **Step 5: 运行迁移、OpenSpec 和差异校验**
 
 Run: `.venv\Scripts\python.exe -m alembic upgrade head`
 
@@ -571,7 +571,7 @@ Run: `git diff --check`
 
 Expected: no output
 
-- [ ] **Step 6: 勾选 OpenSpec tasks 并提交阶段结果**
+- [x] **Step 6: 勾选 OpenSpec tasks 并提交阶段结果**
 
 确认每个任务具有对应实现和测试证据后，将 `tasks.md` 的 17 项全部勾选。
 
