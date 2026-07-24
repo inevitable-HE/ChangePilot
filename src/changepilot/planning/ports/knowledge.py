@@ -8,6 +8,12 @@ from changepilot.planning.domain.knowledge import (
     KnowledgeSnapshot,
     RunbookDocument,
 )
+from changepilot.planning.domain.models import PlanningBoundaryModel
+
+
+class RankedChunk(PlanningBoundaryModel):
+    chunk: KnowledgeChunk
+    score: float
 
 
 class EmbeddingProvider(Protocol):
@@ -48,3 +54,21 @@ class KnowledgeStore(Protocol):
 
     def snapshot(self) -> KnowledgeSnapshot:
         """Return a stable digest for current knowledge content."""
+
+
+class KnowledgeSearchIndex(Protocol):
+    def lexical_search(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> tuple[RankedChunk, ...]:
+        """Return keyword-ranked chunks."""
+
+    def vector_search(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> tuple[RankedChunk, ...]:
+        """Return vector-ranked chunks, or an empty tuple when disabled."""
