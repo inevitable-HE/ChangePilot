@@ -9,6 +9,14 @@ class ModelGatewayError(PlanningError):
     """A model provider failed to return a usable response."""
 
 
+class TransientModelError(ModelGatewayError):
+    """A timeout, throttling response, or provider-side failure."""
+
+
+class PermanentModelError(ModelGatewayError):
+    """A provider response that must not be retried."""
+
+
 class ModelBudgetExceeded(PlanningError):
     """The configured planning budget was exhausted."""
 
