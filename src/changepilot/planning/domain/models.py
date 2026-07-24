@@ -84,12 +84,15 @@ class PlanStep(PlanningBoundaryModel):
     depends_on: tuple[str, ...] = ()
     risk: ToolRisk = ToolRisk.LOW
     approval_required: bool = False
+    approval_reason: str | None = None
+    rationale: str = ""
+    risk_reasons: tuple[str, ...] = ()
     success_conditions: tuple[str, ...] = ()
     compensation_tool: PlanToolRef | None = None
     compensation_intent: str | None = None
     evidence_refs: tuple[EvidenceRef, ...] = ()
 
-    @field_validator("id", "compensation_intent")
+    @field_validator("id", "compensation_intent", "approval_reason")
     @classmethod
     def _reject_blank_optional(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():

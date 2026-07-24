@@ -152,6 +152,28 @@ class PlanValidator:
             policy.minimum_risk if policy is not None else descriptor.risk,
         )
         approval_required = step.approval_required or final_risk is ToolRisk.HIGH
+        risk_reasons = tuple(
+            dict.fromkeys(
+                (
+                    *step.risk_reasons,
+                    *(
+                        ("runtime tool descriptor marks this operation high risk",)
+                        if descriptor.risk is ToolRisk.HIGH
+                        else ()
+                    ),
+                    *(
+                        ("planning tool policy raises the minimum risk",)
+                        if policy is not None
+                        and _RISK_ORDER[policy.minimum_risk]
+                        > _RISK_ORDER[step.risk]
+                        else ()
+                    ),
+                )
+            )
+        )
+        approval_reason = step.approval_reason
+        if approval_required and not approval_reason:
+            approval_reason = "deterministic risk policy requires approval"
 
         if policy is not None:
             self._validate_compensation(step, policy, errors)
@@ -168,6 +190,8 @@ class PlanValidator:
             update={
                 "risk": final_risk,
                 "approval_required": approval_required,
+                "approval_reason": approval_reason,
+                "risk_reasons": risk_reasons,
             }
         )
 
