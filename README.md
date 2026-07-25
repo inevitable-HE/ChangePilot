@@ -1,5 +1,7 @@
 # ChangePilot
 
+[简体中文](README.zh-CN.md)
+
 ChangePilot is a bounded change-planning Agent backed by a reliable workflow
 runtime. It turns a service upgrade request into an evidence-cited DAG, applies
 deterministic risk and compensation policies, pauses for clarification or
@@ -81,6 +83,21 @@ Each command prints a JSON summary of the final workflow and sandbox state.
 They use local Python and SQLite only: no DeepSeek API, Docker, PostgreSQL, or
 network access is required.
 
+## Operations API
+
+Phase 4 adds a local operator-facing API for structured change requests, plan
+review, approval or rejection, run snapshots, cursor-based audit events, SSE,
+recovery, and server-generated reports:
+
+```powershell
+$env:CHANGEPILOT_OPERATIONS_ROOT = ".operations"
+.venv\Scripts\python.exe -m uvicorn changepilot.operations.server:app --reload
+```
+
+Open `http://127.0.0.1:8000/docs` for the resource API. The V1 endpoint drives
+the isolated order-service scenarios and never accepts arbitrary SQL, shell
+commands, tool calls, or production paths.
+
 ## Runbook Updates
 
 Runbooks are Markdown files with YAML frontmatter:
@@ -150,6 +167,7 @@ $env:CHANGEPILOT_RUN_LIVE_LLM = "1"
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\planning -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest tests\sandbox -q -p no:cacheprovider
+.venv\Scripts\python.exe -m pytest tests\operations -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest --cov=changepilot --cov-report=term-missing --cov-fail-under=85 -q -p no:cacheprovider
 openspec validate add-change-execution-sandbox --strict --json --no-interactive
