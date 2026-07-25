@@ -64,6 +64,23 @@ Run the prompt-injection boundary test with:
 .venv\Scripts\python.exe -m pytest tests\planning\security\test_prompt_injection.py -q
 ```
 
+## Offline Execution Sandbox
+
+The execution sandbox continues from the approved plan and applies real local
+effects to an isolated V1 order service and SQLite database. Replay a successful
+upgrade, a failed health check with reverse compensation, or a process restart
+after the schema migration committed but before its result was acknowledged:
+
+```powershell
+.venv\Scripts\python.exe -m changepilot.sandbox.demo --scenario success --root .demo\success
+.venv\Scripts\python.exe -m changepilot.sandbox.demo --scenario compensation --root .demo\compensation
+.venv\Scripts\python.exe -m changepilot.sandbox.demo --scenario recovery --root .demo\recovery
+```
+
+Each command prints a JSON summary of the final workflow and sandbox state.
+They use local Python and SQLite only: no DeepSeek API, Docker, PostgreSQL, or
+network access is required.
+
 ## Runbook Updates
 
 Runbooks are Markdown files with YAML frontmatter:
@@ -132,15 +149,18 @@ $env:CHANGEPILOT_RUN_LIVE_LLM = "1"
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\planning -q -p no:cacheprovider
+.venv\Scripts\python.exe -m pytest tests\sandbox -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest --cov=changepilot --cov-report=term-missing --cov-fail-under=85 -q -p no:cacheprovider
-openspec validate add-agent-planning-and-knowledge --strict --json --no-interactive
+openspec validate add-change-execution-sandbox --strict --json --no-interactive
 git diff --check
 ```
 
 See `docs/architecture/agent-planning-and-knowledge.md` for the Agent boundary
-and `docs/architecture/reliable-workflow-core.md` for runtime transactions,
-recovery, approval, compensation, and audit behavior.
+and `docs/architecture/change-execution-sandbox.md` for the local execution and
+recovery scenarios. Runtime transactions, recovery, approval, compensation,
+and audit behavior are documented in
+`docs/architecture/reliable-workflow-core.md`.
 
 ## Contributing
 

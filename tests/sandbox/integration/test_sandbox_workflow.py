@@ -2,9 +2,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from changepilot.sandbox.application.runtime import make_sandbox_runtime
 from changepilot.sandbox.domain.faults import FaultSpec, FaultType
 from changepilot.sandbox.domain.models import SchemaVersion, ServiceVersion
+
+
+@pytest.fixture(autouse=True)
+def _offline_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "CHANGEPILOT_DEEPSEEK_API_KEY",
+        "CHANGEPILOT_RUN_LIVE_LLM",
+        "DOCKER_HOST",
+        "DATABASE_URL",
+        "PGHOST",
+        "PGPORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _start_approved(runtime) -> str:
