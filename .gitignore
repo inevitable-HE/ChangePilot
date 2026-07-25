@@ -15,6 +15,7 @@ resume_draft.md
 # Temporary files
 tmp/
 .demo/
+.eval-results/
 .operations/
 .worktrees/
 .superpowers/

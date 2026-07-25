@@ -94,6 +94,20 @@ $env:CHANGEPILOT_OPERATIONS_ROOT = ".operations"
 订单服务演示场景，不接受任意 SQL、Shell 命令、工具调用或生产环境路径。
 前端运营控制台和评测结果页将在阶段 4 后续批次接入这套稳定契约。
 
+## 离线评测
+
+版本化核心数据集包含开发集与保留集，覆盖规划、审批阻断、成功执行、补偿和
+重启恢复。使用 Mock LLM 与本地 SQLite 沙箱运行：
+
+```powershell
+.venv\Scripts\python.exe -m changepilot.evaluation.cli `
+  --dataset examples\evaluations\core-v1.json `
+  --output .eval-results\core-v1
+```
+
+命令会生成可比较的 JSON 与 Markdown 报告；任一声明的安全阈值发生回归时
+返回非零退出码。默认运行不会读取 DeepSeek Key，也不会访问网络。
+
 ## 操作手册更新
 
 操作手册使用带 YAML Frontmatter 的 Markdown：

@@ -162,11 +162,7 @@ def test_recovery_command_reconciles_unknown_effect_once(operations) -> None:
     )
     assert recovered.status_code == 200
     assert recovered.json()["summary"]["state"] == "succeeded"
-    runtime = service._runtime_for(run_id)
-    assert runtime.faults.call_count(
-        runtime.sandbox_id,
-        "schema.migrate",
-    ) == 1
+    assert service.get_tool_call_count(run_id, "schema.migrate") == 1
 
 
 def test_rejected_approval_cancels_without_side_effects(operations) -> None:

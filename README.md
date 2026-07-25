@@ -98,6 +98,22 @@ Open `http://127.0.0.1:8000/docs` for the resource API. The V1 endpoint drives
 the isolated order-service scenarios and never accepts arbitrary SQL, shell
 commands, tool calls, or production paths.
 
+## Offline Evaluation
+
+The versioned core dataset contains development and holdout cases for planning,
+approval blocking, successful execution, compensation, and restart recovery.
+Run it with the Mock LLM and local SQLite sandbox:
+
+```powershell
+.venv\Scripts\python.exe -m changepilot.evaluation.cli `
+  --dataset examples\evaluations\core-v1.json `
+  --output .eval-results\core-v1
+```
+
+The command produces comparable JSON and Markdown reports and exits non-zero
+when a declared safety threshold regresses. It does not read a DeepSeek key or
+make network requests.
+
 ## Runbook Updates
 
 Runbooks are Markdown files with YAML frontmatter:

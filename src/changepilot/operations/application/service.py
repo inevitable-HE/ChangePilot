@@ -310,6 +310,11 @@ class OperationsService:
                 return report
             return _markdown_report(report)
 
+    def get_tool_call_count(self, run_id: str, tool_name: str) -> int:
+        with self._lock:
+            runtime = self._runtime_for(run_id)
+            return runtime.faults.call_count(runtime.sandbox_id, tool_name)
+
     def close(self) -> None:
         with self._lock:
             for runtime in self._runtimes.values():
