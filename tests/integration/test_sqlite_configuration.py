@@ -220,7 +220,7 @@ def test_alembic_upgrade_creates_runtime_schema_and_constraints(tmp_path: Path) 
         assert "alembic_version" in tables
         assert (
             connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-            == "0003_compensation_errors"
+            == "0004_planning_knowledge"
         )
 
         workflow_run_columns = {
