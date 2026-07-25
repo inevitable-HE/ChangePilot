@@ -172,7 +172,9 @@ class RecoveryService:
                     phase=phase,
                     logical_idempotency_key=attempt.idempotency_key,
                     deadline=deadline,
-                    metadata={},
+                    metadata={
+                        "arguments": step_definition.arguments,
+                    },
                 )
             )
             if result.status is ToolProbeStatus.FOUND:
