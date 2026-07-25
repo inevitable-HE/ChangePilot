@@ -79,6 +79,21 @@ def test_resource_path_cannot_escape_sandbox(
         manager.resolve_resource("demo", tmp_path / "outside.db")
 
 
+@pytest.mark.parametrize(
+    "value",
+    ("/etc/outside.db", "C:\\outside.db", "\\\\server\\share\\outside.db"),
+)
+def test_resource_path_rejects_cross_platform_absolute_paths(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    manager = SandboxManager(tmp_path / "sandboxes")
+    manager.create("demo")
+
+    with pytest.raises(SandboxBoundaryError, match="absolute"):
+        manager.resolve_resource("demo", value)
+
+
 def test_v1_to_v2_migration_uses_ledger_and_fingerprint(
     tmp_path: Path,
 ) -> None:

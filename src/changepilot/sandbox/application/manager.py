@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from changepilot.sandbox.adapters.sqlite import SQLiteSandboxDatabase
 from changepilot.sandbox.domain.models import (
@@ -79,9 +79,19 @@ class SandboxManager:
         relative_path: str | Path,
     ) -> Path:
         root = self._sandbox_root(sandbox_id)
-        candidate = Path(relative_path)
-        if candidate.is_absolute():
+        raw_path = str(relative_path)
+        candidate = Path(raw_path)
+        posix_path = PurePosixPath(raw_path)
+        windows_path = PureWindowsPath(raw_path)
+        if (
+            candidate.is_absolute()
+            or posix_path.is_absolute()
+            or windows_path.is_absolute()
+            or bool(windows_path.drive)
+        ):
             raise SandboxBoundaryError("absolute resource paths are forbidden")
+        if ".." in posix_path.parts or ".." in windows_path.parts:
+            raise SandboxBoundaryError("resource path escapes the sandbox")
         resolved = (root / candidate).resolve()
         if not resolved.is_relative_to(root):
             raise SandboxBoundaryError("resource path escapes the sandbox")
