@@ -2,6 +2,7 @@
 change: add-agent-planning-and-knowledge
 design-doc: docs/superpowers/specs/2026-07-24-agent-planning-and-knowledge-design.md
 base-ref: 6a1ede224f00718b8dfeb695adba0ef88ce7004c
+archived-with: 2026-07-25-add-agent-planning-and-knowledge
 ---
 
 # Agent 规划与知识检索实施计划

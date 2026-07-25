@@ -2,6 +2,8 @@
 comet_change: add-agent-planning-and-knowledge
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-25-add-agent-planning-and-knowledge
+status: final
 ---
 
 # Agent 规划与知识检索技术设计
