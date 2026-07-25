@@ -55,3 +55,33 @@ class MigrationResult(SandboxBoundaryModel):
     to_version: SchemaVersion
     database_fingerprint: str
     already_applied: bool
+
+
+class SandboxArguments(SandboxBoundaryModel):
+    sandbox_id: str
+
+
+class MigrationArguments(SandboxArguments):
+    expected_fingerprint: str
+
+
+class EnvironmentOutput(SandboxBoundaryModel):
+    state: SandboxState
+    summary: str
+    evidence_digest: str
+
+
+class ActionOutput(SandboxBoundaryModel):
+    sandbox_id: str
+    action: str
+    before: SandboxState | None
+    after: SandboxState
+    summary: str
+    already_applied: bool = False
+
+
+class ValidationOutput(SandboxBoundaryModel):
+    state: SandboxState
+    success: bool
+    checks: tuple[str, ...]
+    summary: str

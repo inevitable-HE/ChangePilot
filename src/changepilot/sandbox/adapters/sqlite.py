@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from changepilot.sandbox.domain.models import (
@@ -44,13 +44,18 @@ class SQLiteSandboxDatabase:
                         customer TEXT NOT NULL,
                         total_cents INTEGER NOT NULL CHECK (total_cents >= 0)
                     );
-                    CREATE TABLE migration_ledger (
-                        migration_id TEXT PRIMARY KEY,
-                        from_version TEXT NOT NULL,
-                        to_version TEXT NOT NULL,
-                        idempotency_key TEXT NOT NULL UNIQUE,
-                        database_fingerprint TEXT NOT NULL
-                    );
+                CREATE TABLE migration_ledger (
+                    migration_id TEXT PRIMARY KEY,
+                    from_version TEXT NOT NULL,
+                    to_version TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    database_fingerprint TEXT NOT NULL
+                );
+                CREATE TABLE tool_effects (
+                    logical_idempotency_key TEXT PRIMARY KEY,
+                    tool_name TEXT NOT NULL,
+                    output_json TEXT NOT NULL
+                );
                     """
                 )
                 connection.executemany(
@@ -148,20 +153,17 @@ class SQLiteSandboxDatabase:
         expected_fingerprint: str,
     ) -> MigrationResult:
         with self._connect(path) as connection:
-            existing = connection.execute(
-                """
-                SELECT from_version, to_version, database_fingerprint
-                FROM migration_ledger
-                WHERE idempotency_key = ?
-                """,
-                (idempotency_key,),
-            ).fetchone()
+            existing = self._migration_by_key(connection, idempotency_key)
             if existing is not None:
+                if existing[0] != _MIGRATION_ID:
+                    raise SandboxDatabaseError(
+                        "idempotency key belongs to another migration"
+                    )
                 return MigrationResult(
-                    migration_id=_MIGRATION_ID,
-                    from_version=SchemaVersion(existing[0]),
-                    to_version=SchemaVersion(existing[1]),
-                    database_fingerprint=str(existing[2]),
+                    migration_id=str(existing[0]),
+                    from_version=SchemaVersion(existing[1]),
+                    to_version=SchemaVersion(existing[2]),
+                    database_fingerprint=str(existing[3]),
                     already_applied=True,
                 )
             current = self._schema_version_in(connection)
@@ -207,6 +209,143 @@ class SQLiteSandboxDatabase:
             already_applied=False,
         )
 
+    def rollback_v2_to_v1(
+        self,
+        path: Path,
+        *,
+        idempotency_key: str,
+    ) -> MigrationResult:
+        rollback_id = "orders-v2-to-v1"
+        with self._connect(path) as connection:
+            existing = self._migration_by_key(connection, idempotency_key)
+            if existing is not None:
+                if existing[0] != rollback_id:
+                    raise SandboxDatabaseError(
+                        "idempotency key belongs to another migration"
+                    )
+                return MigrationResult(
+                    migration_id=str(existing[0]),
+                    from_version=SchemaVersion(existing[1]),
+                    to_version=SchemaVersion(existing[2]),
+                    database_fingerprint=str(existing[3]),
+                    already_applied=True,
+                )
+            current = self._schema_version_in(connection)
+            if current is not SchemaVersion.V2:
+                raise SandboxDatabaseError(
+                    f"rollback requires schema v2, found {current.value}"
+                )
+            unsafe = connection.execute(
+                "SELECT COUNT(*) FROM orders WHERE priority <> 'standard'"
+            ).fetchone()
+            if unsafe is None or int(unsafe[0]) > 0:
+                raise SandboxDatabaseError(
+                    "schema rollback would discard non-default priority data"
+                )
+            connection.executescript(
+                """
+                CREATE TABLE orders_v1 (
+                    order_id TEXT PRIMARY KEY,
+                    customer TEXT NOT NULL,
+                    total_cents INTEGER NOT NULL CHECK (total_cents >= 0)
+                );
+                INSERT INTO orders_v1(order_id, customer, total_cents)
+                SELECT order_id, customer, total_cents FROM orders;
+                DROP TABLE orders;
+                ALTER TABLE orders_v1 RENAME TO orders;
+                UPDATE sandbox_metadata SET value = 'v1'
+                WHERE key = 'schema_version';
+                """
+            )
+            final_fingerprint = self._fingerprint(connection)
+            connection.execute(
+                """
+                INSERT INTO migration_ledger(
+                    migration_id,
+                    from_version,
+                    to_version,
+                    idempotency_key,
+                    database_fingerprint
+                ) VALUES (?, 'v2', 'v1', ?, ?)
+                """,
+                (rollback_id, idempotency_key, final_fingerprint),
+            )
+        return MigrationResult(
+            migration_id=rollback_id,
+            from_version=SchemaVersion.V2,
+            to_version=SchemaVersion.V1,
+            database_fingerprint=final_fingerprint,
+            already_applied=False,
+        )
+
+    def migration_for_key(
+        self,
+        path: Path,
+        idempotency_key: str,
+    ) -> MigrationResult | None:
+        with self._connect(path) as connection:
+            row = self._migration_by_key(connection, idempotency_key)
+        if row is None:
+            return None
+        return MigrationResult(
+            migration_id=str(row[0]),
+            from_version=SchemaVersion(row[1]),
+            to_version=SchemaVersion(row[2]),
+            database_fingerprint=str(row[3]),
+            already_applied=True,
+        )
+
+    def effect_output(
+        self,
+        path: Path,
+        *,
+        logical_idempotency_key: str,
+        tool_name: str,
+    ) -> dict[str, object] | None:
+        with self._connect(path) as connection:
+            row = connection.execute(
+                """
+                SELECT tool_name, output_json
+                FROM tool_effects
+                WHERE logical_idempotency_key = ?
+                """,
+                (logical_idempotency_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        if row[0] != tool_name:
+            raise SandboxDatabaseError(
+                "idempotency key belongs to another tool"
+            )
+        payload = json.loads(row[1])
+        if not isinstance(payload, dict):
+            raise SandboxDatabaseError("stored tool output is invalid")
+        return payload
+
+    def record_effect(
+        self,
+        path: Path,
+        *,
+        logical_idempotency_key: str,
+        tool_name: str,
+        output: dict[str, object],
+    ) -> None:
+        with self._connect(path) as connection:
+            connection.execute(
+                """
+                INSERT INTO tool_effects(
+                    logical_idempotency_key,
+                    tool_name,
+                    output_json
+                ) VALUES (?, ?, ?)
+                """,
+                (
+                    logical_idempotency_key,
+                    tool_name,
+                    json.dumps(output, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+
     def fingerprint(self, path: Path) -> str:
         with self._connect(path) as connection:
             return self._fingerprint(connection)
@@ -235,6 +374,20 @@ class SQLiteSandboxDatabase:
         if row is None:
             raise SandboxDatabaseError("schema version metadata is missing")
         return SchemaVersion(row[0])
+
+    @staticmethod
+    def _migration_by_key(
+        connection: sqlite3.Connection,
+        idempotency_key: str,
+    ) -> tuple[object, ...] | None:
+        return connection.execute(
+            """
+            SELECT migration_id, from_version, to_version, database_fingerprint
+            FROM migration_ledger
+            WHERE idempotency_key = ?
+            """,
+            (idempotency_key,),
+        ).fetchone()
 
     def _fingerprint(self, connection: sqlite3.Connection) -> str:
         version = self._schema_version_in(connection)
