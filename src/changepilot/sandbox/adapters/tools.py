@@ -16,6 +16,10 @@ from changepilot.sandbox.application.manager import (
     SandboxBoundaryError,
     SandboxManager,
 )
+from changepilot.sandbox.application.faults import (
+    DeterministicFaultInjector,
+    FaultInjectingTool,
+)
 from changepilot.sandbox.application.orders import OrderService
 from changepilot.sandbox.domain.models import (
     ActionOutput,
@@ -377,7 +381,7 @@ class ValidationTool:
 class SchemaRollbackTool:
     descriptor = _descriptor(
         "schema.rollback",
-        SandboxArguments,
+        MigrationArguments,
         ActionOutput,
         risk=ToolRisk.HIGH,
         idempotency=ToolIdempotency.SUPPORTED,
@@ -394,7 +398,7 @@ class SchemaRollbackTool:
     def execute(
         self,
         context: ToolExecutionContext,
-        arguments: SandboxArguments,
+        arguments: MigrationArguments,
     ) -> ToolExecutionResult:
         try:
             before = self._manager.inspect(arguments.sandbox_id)
@@ -458,7 +462,11 @@ class SandboxToolSuite:
     compensations: Mapping[str, str]
 
 
-def build_sandbox_tool_suite(manager: SandboxManager) -> SandboxToolSuite:
+def build_sandbox_tool_suite(
+    manager: SandboxManager,
+    *,
+    fault_injector: DeterministicFaultInjector | None = None,
+) -> SandboxToolSuite:
     database = SQLiteSandboxDatabase()
     tools = (
         EnvironmentInspectTool("service.inspect", manager),
@@ -489,8 +497,16 @@ def build_sandbox_tool_suite(manager: SandboxManager) -> SandboxToolSuite:
         ),
         SchemaRollbackTool(manager, database),
     )
+    registered_tools = (
+        tuple(
+            FaultInjectingTool(tool, fault_injector)
+            for tool in tools
+        )
+        if fault_injector is not None
+        else tools
+    )
     return SandboxToolSuite(
-        registry=ToolRegistry(tools),
+        registry=ToolRegistry(registered_tools),
         compensations=MappingProxyType(
             {
                 "schema.migrate": "schema.rollback",

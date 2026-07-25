@@ -839,7 +839,9 @@ class Coordinator:
                 phase=phase,
                 logical_idempotency_key=key,
                 deadline=deadline,
-                metadata={},
+                metadata={
+                    "arguments": arguments.model_dump(mode="python"),
+                },
             ),
             arguments=arguments,
         )

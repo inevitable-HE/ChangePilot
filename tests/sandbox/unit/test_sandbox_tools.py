@@ -227,7 +227,10 @@ def test_compensation_restores_service_then_safely_rolls_back_schema(
     )
     rollback = suite.registry.resolve("schema.rollback", "1.0.0").execute(
         _context("rollback"),
-        arguments,
+        MigrationArguments(
+            sandbox_id="demo",
+            expected_fingerprint=initial.database_fingerprint,
+        ),
     )
 
     state = manager.inspect("demo")
@@ -266,7 +269,10 @@ def test_schema_rollback_rejects_v2_only_data(tmp_path: Path) -> None:
     with pytest.raises(DomainError, match="discard"):
         suite.registry.resolve("schema.rollback", "1.0.0").execute(
             _context("rollback"),
-            arguments,
+            MigrationArguments(
+                sandbox_id="demo",
+                expected_fingerprint=initial.database_fingerprint,
+            ),
         )
 
     assert manager.inspect("demo").schema_version is SchemaVersion.V2
