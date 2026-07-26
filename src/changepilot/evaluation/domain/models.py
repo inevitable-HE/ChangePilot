@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -79,6 +80,7 @@ class CaseResult(EvaluationBoundaryModel):
 
 
 class EvaluationMetadata(EvaluationBoundaryModel):
+    generated_at: datetime | None = None
     code_version: str
     dataset_id: str
     dataset_version: str

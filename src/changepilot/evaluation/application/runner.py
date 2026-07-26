@@ -4,6 +4,7 @@ import json
 import platform
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -59,6 +60,7 @@ class EvaluationRunner:
             run_id=str(uuid4()),
             passed=not regressions and all(result.passed for result in results),
             metadata=EvaluationMetadata(
+                generated_at=datetime.now(timezone.utc),
                 code_version=self._code_version,
                 dataset_id=dataset.dataset_id,
                 dataset_version=dataset.version,

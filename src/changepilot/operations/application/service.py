@@ -193,6 +193,13 @@ class OperationsService:
                         if step.get("compensation_tool") is not None
                         else None
                     ),
+                    rationale=_plan_annotations(str(step["tool"]["name"]))[0],
+                    validation_intent=_plan_annotations(
+                        str(step["tool"]["name"])
+                    )[1],
+                    evidence_refs=_plan_annotations(
+                        str(step["tool"]["name"])
+                    )[2],
                 )
                 for step in payload["steps"]
             )
@@ -474,3 +481,62 @@ def _markdown_report(report: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _plan_annotations(
+    tool_name: str,
+) -> tuple[str, str, tuple[str, ...]]:
+    annotations = {
+        "service.inspect": (
+            "Capture the deployed service version before making changes.",
+            "Service reports the expected V1 baseline.",
+            ("order-service-upgrade@1.0#prechecks",),
+        ),
+        "schema.inspect": (
+            "Capture the schema version and immutable database fingerprint.",
+            "Schema reports V1 and a valid precondition fingerprint.",
+            ("schema-migration@1.0#preconditions",),
+        ),
+        "upgrade.precheck": (
+            "Verify the service and database form a supported upgrade baseline.",
+            "All compatibility and migration prerequisites pass.",
+            (
+                "order-service-upgrade@1.0#compatibility",
+                "schema-migration@1.0#preconditions",
+            ),
+        ),
+        "schema.migrate": (
+            "Apply the versioned V1 to V2 order-schema migration.",
+            "Migration ledger records one committed V2 transition.",
+            (
+                "schema-migration@1.0#procedure",
+                "rollback-policy@1.0#database",
+            ),
+        ),
+        "service.deploy-v2": (
+            "Switch the isolated order service to the V2 contract.",
+            "V2 starts only after the V2 schema is available.",
+            (
+                "order-service-upgrade@1.0#deployment",
+                "rollback-policy@1.0#service",
+            ),
+        ),
+        "service.health-check": (
+            "Check service and database compatibility after deployment.",
+            "The V2 health contract returns success.",
+            ("order-service-upgrade@1.0#validation",),
+        ),
+        "service.smoke-test": (
+            "Exercise order reads and the versioned business contract.",
+            "Orders remain readable and the V2 contract is valid.",
+            ("order-service-upgrade@1.0#smoke-test",),
+        ),
+    }
+    return annotations.get(
+        tool_name,
+        (
+            "Execute the validated plan step.",
+            "The tool returns its declared success contract.",
+            (),
+        ),
+    )

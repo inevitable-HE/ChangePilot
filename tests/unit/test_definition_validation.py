@@ -153,6 +153,8 @@ def test_project_uses_standard_backend_and_declares_planned_dependencies() -> No
         "langgraph>=1.0,<2",
         "openai>=2.0,<3",
         "pyyaml>=6.0,<7",
+        "fastapi>=0.116,<1",
+        "uvicorn>=0.35,<1",
     ]
     assert pyproject["project"]["optional-dependencies"]["retrieval"] == [
         "sentence-transformers>=5.0,<6",

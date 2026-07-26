@@ -86,6 +86,9 @@ class PlanStepView(OperationsBoundaryModel):
     approval_required: bool
     arguments: dict[str, Any]
     compensation_tool: PlanToolView | None = None
+    rationale: str
+    validation_intent: str
+    evidence_refs: tuple[str, ...]
 
 
 class PlanView(OperationsBoundaryModel):

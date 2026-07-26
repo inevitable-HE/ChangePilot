@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
+from changepilot.evaluation.domain.models import EvaluationReport
 from changepilot.operations.application.service import (
     OperationsConflictError,
     OperationsService,
@@ -19,7 +22,12 @@ from changepilot.operations.domain.models import (
 from changepilot.workflow.ports.persistence import OptimisticLockError
 
 
-def create_operations_app(service: OperationsService) -> FastAPI:
+def create_operations_app(
+    service: OperationsService,
+    *,
+    evaluation_roots: Sequence[str | Path] = (),
+) -> FastAPI:
+    report_roots = tuple(Path(root).resolve() for root in evaluation_roots)
     app = FastAPI(
         title="ChangePilot Operations API",
         version="0.1.0",
@@ -111,8 +119,31 @@ def create_operations_app(service: OperationsService) -> FastAPI:
         return PlainTextResponse(report, media_type="text/markdown")
 
     @app.get("/api/evaluations")
-    def evaluation_history() -> list[object]:
-        return []
+    def evaluation_history() -> list[dict[str, object]]:
+        reports: dict[str, EvaluationReport] = {}
+        for root in report_roots:
+            if not root.is_dir():
+                continue
+            for report_path in root.rglob("evaluation.json"):
+                try:
+                    report = EvaluationReport.model_validate_json(
+                        report_path.read_text(encoding="utf-8"),
+                        strict=False,
+                    )
+                except (OSError, ValueError):
+                    continue
+                reports[report.run_id] = report
+        return [
+            report.model_dump(mode="json")
+            for report in sorted(
+                reports.values(),
+                key=lambda item: item.metadata.generated_at
+                or datetime.min.replace(
+                    tzinfo=timezone.utc,
+                ),
+                reverse=True,
+            )
+        ]
 
     return app
 

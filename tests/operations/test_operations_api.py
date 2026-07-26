@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from changepilot.operations.adapters.api import create_operations_app
-from changepilot.operations.application.service import OperationsService
+from changepilot.operations.application.service import (
+    OperationsConflictError,
+    OperationsService,
+)
+from changepilot.operations.domain.models import ApprovalCommand
 
 
 @pytest.fixture
@@ -89,6 +96,8 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
     assert migration["risk"] == "high"
     assert migration["approval_required"] is True
     assert migration["compensation_tool"]["name"] == "schema.rollback"
+    assert "schema-migration@1.0#procedure" in migration["evidence_refs"]
+    assert migration["validation_intent"]
 
     before = client.get(f"/api/runs/{run_id}/events").json()
     cursor = before["events"][2]["sequence"]
@@ -117,6 +126,19 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
     assert stream.status_code == 200
     assert "event: audit" in stream.text
     assert "id: " in stream.text
+    all_events = client.get(f"/api/runs/{run_id}/events").json()["events"]
+    cursor = all_events[-2]["sequence"]
+    resumed = client.get(
+        f"/api/runs/{run_id}/events/stream",
+        params={"after": cursor},
+    )
+    resumed_ids = [
+        int(line.removeprefix("id: "))
+        for line in resumed.text.splitlines()
+        if line.startswith("id: ")
+    ]
+    assert resumed_ids
+    assert all(sequence > cursor for sequence in resumed_ids)
 
 
 def test_stale_approval_is_rejected_with_authoritative_state(
@@ -165,6 +187,20 @@ def test_recovery_command_reconciles_unknown_effect_once(operations) -> None:
     assert service.get_tool_call_count(run_id, "schema.migrate") == 1
 
 
+def test_recovery_is_rejected_without_unknown_result(operations) -> None:
+    _, client = operations
+    run_id = _submit(client)["run_id"]
+    snapshot = client.get(f"/api/runs/{run_id}").json()
+
+    response = client.post(
+        f"/api/runs/{run_id}/recover",
+        json={"expected_run_revision": snapshot["summary"]["revision"]},
+    )
+
+    assert response.status_code == 409
+    assert "no recoverable" in response.json()["detail"]
+
+
 def test_rejected_approval_cancels_without_side_effects(operations) -> None:
     _, client = operations
     run_id = _submit(client)["run_id"]
@@ -181,6 +217,36 @@ def test_rejected_approval_cancels_without_side_effects(operations) -> None:
 
     assert rejected.status_code == 200
     assert rejected.json()["summary"]["state"] == "cancelled"
+
+
+def test_concurrent_approval_decisions_allow_only_one_winner(
+    operations,
+) -> None:
+    service, client = operations
+    run_id = _submit(client)["run_id"]
+    snapshot = service.get_snapshot(run_id)
+    pending = snapshot.pending_approval
+    assert pending is not None
+    command = ApprovalCommand(
+        decision="approved",
+        expected_version=int(pending["version"]),
+        binding_digest=str(pending["binding_digest"]),
+        actor="concurrency-test",
+        reason="Only one approval command may win.",
+    )
+    barrier = threading.Barrier(2)
+
+    def decide() -> str:
+        barrier.wait()
+        try:
+            return service.decide_approval(run_id, command).summary.state
+        except OperationsConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: decide(), range(2)))
+
+    assert sorted(outcomes) == ["conflict", "succeeded"]
 
 
 def test_terminal_run_can_be_loaded_after_service_restart(tmp_path: Path) -> None:
@@ -204,3 +270,53 @@ def test_terminal_run_can_be_loaded_after_service_restart(tmp_path: Path) -> Non
         assert second.get_events(run_id).next_cursor > 0
     finally:
         second.close()
+
+
+def test_evaluation_history_loads_valid_versioned_reports(
+    tmp_path: Path,
+) -> None:
+    service = OperationsService(tmp_path / "operations")
+    reports = tmp_path / "evaluations" / "core-v1"
+    reports.mkdir(parents=True)
+    (reports / "evaluation.json").write_text(
+        json.dumps(
+            {
+                "report_version": "1.0",
+                "run_id": "evaluation-1",
+                "passed": True,
+                "metadata": {
+                    "code_version": "test-sha",
+                    "dataset_id": "core",
+                    "dataset_version": "1.0",
+                    "metrics_version": "1.0",
+                    "prompt_version": "1.0",
+                    "knowledge_version": "1.0",
+                    "model": "mock-planner",
+                    "random_seed": 7,
+                    "environment": {"online": False},
+                },
+                "case_results": [],
+                "aggregate_metrics": {"completion_rate": 1.0},
+                "thresholds": {"completion_rate": 1.0},
+                "regressions": [],
+                "baseline_delta": {"completion_rate": 0.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    invalid = reports / "invalid" / "evaluation.json"
+    invalid.parent.mkdir()
+    invalid.write_text("not-json", encoding="utf-8")
+    client = TestClient(
+        create_operations_app(
+            service,
+            evaluation_roots=(tmp_path / "evaluations",),
+        )
+    )
+
+    response = client.get("/api/evaluations")
+
+    assert response.status_code == 200
+    assert [item["run_id"] for item in response.json()] == ["evaluation-1"]
+    client.close()
+    service.close()

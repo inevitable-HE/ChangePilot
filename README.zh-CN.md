@@ -24,6 +24,7 @@ ChangePilot 是一个建立在可靠工作流运行时之上的受约束变更�
 ## 环境要求
 
 - Python 3.12
+- 运行运营控制台需要 Node.js 20+ 与 npm
 - Windows、WSL 或 Linux
 - 默认不需要 Docker
 - 只有主动运行在线冒烟测试时才需要 DeepSeek API Key
@@ -92,7 +93,28 @@ $env:CHANGEPILOT_OPERATIONS_ROOT = ".operations"
 
 启动后访问 `http://127.0.0.1:8000/docs` 查看资源型 API。V1 只驱动隔离的
 订单服务演示场景，不接受任意 SQL、Shell 命令、工具调用或生产环境路径。
-前端运营控制台和评测结果页将在阶段 4 后续批次接入这套稳定契约。
+
+## 运营控制台
+
+保持 API 运行，并在另一个终端启动 React 控制台：
+
+```powershell
+cd console
+npm install
+npm run dev
+```
+
+访问 `http://127.0.0.1:5173`。控制台支持结构化变更提交、计划与知识证据
+审阅、受保护的批准或拒绝、带轮询降级的实时审计事件、显式恢复、报告导出
+和评测历史。`success`、`compensation`、`recovery` 三个场景均为隔离的本地
+演示。
+
+安装 Python 与前端依赖后，也可以用一条命令同时运行两项本地服务，按
+`Ctrl+C` 统一停止：
+
+```powershell
+.\scripts\start-operations-demo.ps1
+```
 
 ## 离线评测
 
@@ -107,6 +129,29 @@ $env:CHANGEPILOT_OPERATIONS_ROOT = ".operations"
 
 命令会生成可比较的 JSON 与 Markdown 报告；任一声明的安全阈值发生回归时
 返回非零退出码。默认运行不会读取 DeepSeek Key，也不会访问网络。
+
+仓库已在 `examples/evaluations/baseline-v1/evaluation.json` 固化首个通过
+基线。将新结果与基线比较：
+
+```powershell
+.venv\Scripts\python.exe -m changepilot.evaluation.cli `
+  --dataset examples\evaluations\core-v1.json `
+  --output .eval-results\candidate `
+  --baseline examples\evaluations\baseline-v1\evaluation.json
+```
+
+只有显式设置 `CHANGEPILOT_RUN_ONLINE_EVAL=1` 且提供 DeepSeek Key，在线评测
+保护层才允许启动。下一样例或模型调用一旦会超过样例数、调用次数、Token 或
+预估费用上限，系统会在发起调用前拒绝。日常开发默认且推荐使用离线评测。
+
+```powershell
+$env:CHANGEPILOT_RUN_ONLINE_EVAL = "1"
+$env:CHANGEPILOT_ONLINE_EVAL_MAX_CASES = "1"
+$env:CHANGEPILOT_ONLINE_EVAL_MAX_CALLS = "1"
+$env:CHANGEPILOT_ONLINE_EVAL_MAX_TOKENS = "1024"
+$env:CHANGEPILOT_ONLINE_EVAL_MAX_COST = "0.01"
+$env:CHANGEPILOT_DEEPSEEK_API_KEY = "..."
+```
 
 ## 操作手册更新
 
@@ -177,6 +222,8 @@ $env:CHANGEPILOT_RUN_LIVE_LLM = "1"
 .venv\Scripts\python.exe -m pytest tests\planning -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest tests\sandbox -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest tests\operations -q -p no:cacheprovider
+.venv\Scripts\python.exe -m pytest tests\evaluation -q -p no:cacheprovider
+npm --prefix console run build
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
 .venv\Scripts\python.exe -m pytest --cov=changepilot --cov-report=term-missing --cov-fail-under=85 -q -p no:cacheprovider
 openspec validate add-operations-console-and-evals --strict --json --no-interactive
@@ -188,6 +235,7 @@ git diff --check
 - `docs/architecture/agent-planning-and-knowledge.md`：Agent 边界与知识检索。
 - `docs/architecture/change-execution-sandbox.md`：本地执行与恢复场景。
 - `docs/architecture/reliable-workflow-core.md`：事务、审批、恢复、补偿与审计。
+- `docs/architecture/operations-console-and-evaluation.md`：运营控制台与评测边界。
 
 ## 参与开发
 
