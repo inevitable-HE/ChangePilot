@@ -24,9 +24,15 @@ button { color: inherit; }
 .view-tabs { justify-self: center; display: flex; align-self: stretch; }
 .view-tabs button { display: flex; align-items: center; gap: 7px; padding: 0 18px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #aebcc3; cursor: pointer; }
 .view-tabs button.active { color: white; border-bottom-color: #f0b84b; }
+.top-actions { display: flex; align-items: center; gap: 14px; }
 .top-stats { display: flex; gap: 16px; align-items: center; font-size: 12px; color: #bac6cc; }
 .top-stats span { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
 .connection span { width: 7px; height: 7px; border-radius: 50%; background: #58c98b; }
+.language-switch { height: 30px; display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid #40515a; border-radius: 5px; color: #aebcc3; }
+.language-switch > svg { margin: 0 4px 0 2px; }
+.language-switch button { height: 22px; padding: 0 7px; border: 0; border-radius: 3px; background: transparent; color: #aebcc3; cursor: pointer; font-size: 10px; }
+.language-switch button:hover { color: white; }
+.language-switch button.active { background: #e8eef0; color: #17212b; }
 
 .operations-grid { min-height: calc(100vh - 62px); display: grid; grid-template-columns: 288px minmax(480px, 1fr) 340px; }
 .run-panel, .audit-panel { background: #f8fafb; min-width: 0; }
@@ -172,6 +178,8 @@ button { color: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1050px) {
+  .top-stats { gap: 8px; }
+  .top-stats .connection { display: none; }
   .operations-grid { grid-template-columns: 250px minmax(450px, 1fr); }
   .audit-panel { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #d7dfe3; display: grid; grid-template-columns: 300px 1fr; }
   .audit-heading { border-top: 0; }.audit-list { max-height: 300px; }
@@ -179,9 +187,15 @@ button { color: inherit; }
   .evaluation-footer { grid-template-columns: 1fr 1fr; }
 }
 
+@media (max-width: 900px) {
+  .top-stats { display: none; }
+}
+
 @media (max-width: 720px) {
   .topbar { height: auto; min-height: 58px; grid-template-columns: 1fr auto; padding: 9px 12px; }
   .brand small, .top-stats { display: none; }
+  .top-actions { justify-self: end; }
+  .language-switch > svg { display: none; }
   .view-tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-top: 8px; border-top: 1px solid #2b3940; }
   .view-tabs button { flex: 1; justify-content: center; min-height: 40px; }
   .operations-grid { display: block; }

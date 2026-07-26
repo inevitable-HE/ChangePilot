@@ -112,7 +112,8 @@ npm run dev
 Open `http://127.0.0.1:5173`. The console supports structured change
 submission, plan and evidence review, guarded approval or rejection, live audit
 events with polling fallback, explicit recovery, report export, and evaluation
-history. The `success`, `compensation`, and `recovery` scenarios are isolated
+history. Its English/Chinese switch persists the selected interface language
+locally. The `success`, `compensation`, and `recovery` scenarios are isolated
 local demonstrations.
 
 After installing both Python and console dependencies, one command can keep
