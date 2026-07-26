@@ -2,6 +2,10 @@
 
 [简体中文](README.zh-CN.md)
 
+New to the project? Start with the [user guide](docs/user-guide.md) to
+understand the scenario, operator workflow, reliability model, and current
+boundaries before running the demo.
+
 ChangePilot is a bounded change-planning Agent backed by a reliable workflow
 runtime. It turns a service upgrade request into an evidence-cited DAG, applies
 deterministic risk and compensation policies, pauses for clarification or

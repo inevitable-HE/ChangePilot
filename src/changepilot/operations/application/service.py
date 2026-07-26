@@ -20,8 +20,10 @@ from changepilot.operations.domain.models import (
     PlanView,
     RecoveryCommand,
     RequestStatus,
+    RunGuidance,
     RunSnapshot,
     RunSummary,
+    GuidanceStageView,
 )
 from changepilot.sandbox.application.runtime import (
     SandboxWorkflowRuntime,
@@ -172,6 +174,42 @@ class OperationsService:
     def get_snapshot(self, run_id: str) -> RunSnapshot:
         with self._lock:
             return self._snapshot(run_id)
+
+    def get_guidance(self, run_id: str) -> RunGuidance:
+        with self._lock:
+            snapshot = self._snapshot(run_id)
+            request = self._stored_for_run(run_id).view.request
+            if (
+                request.service_id is None
+                or request.current_version is None
+                or request.target_version is None
+            ):
+                raise OperationsConflictError(
+                    "prepared run is missing its required request context"
+                )
+            headline_code, next_action_code = _guidance_codes(snapshot)
+            return RunGuidance(
+                run_id=run_id,
+                goal=request.change_summary,
+                service_id=request.service_id,
+                current_version=request.current_version,
+                target_version=request.target_version,
+                success_conditions=request.success_conditions,
+                constraints=request.constraints,
+                scenario=request.scenario,
+                headline_code=headline_code,
+                next_action_code=next_action_code,
+                report_available=snapshot.summary.state in _TERMINAL_STATES,
+                stages=_guidance_stages(snapshot),
+                safety_controls=(
+                    "local_sandbox",
+                    "fixed_tool_contracts",
+                    "approval_before_migration",
+                    "idempotent_effects",
+                    "compensation_available",
+                    "audit_persisted",
+                ),
+            )
 
     def get_plan(self, run_id: str) -> PlanView:
         with self._lock:
@@ -481,6 +519,113 @@ def _markdown_report(report: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _guidance_codes(snapshot: RunSnapshot) -> tuple[str, str]:
+    states = {str(step["state"]) for step in snapshot.steps}
+    if "result_unknown" in states:
+        return "recovery_needed", "recover_unknown_result"
+    state = snapshot.summary.state
+    if state == "waiting_approval":
+        return "awaiting_approval", "review_migration_approval"
+    if state == "succeeded":
+        return "change_completed", "download_run_report"
+    if state == "compensated":
+        return "change_compensated", "inspect_failure_and_compensation"
+    if state == "cancelled":
+        return "change_cancelled", "review_rejection_audit"
+    if state in {"failed", "compensation_failed", "manual_intervention"}:
+        return "manual_attention", "inspect_diagnostic_evidence"
+    return "execution_in_progress", "monitor_authoritative_events"
+
+
+def _guidance_stages(
+    snapshot: RunSnapshot,
+) -> tuple[GuidanceStageView, ...]:
+    step_states = {
+        str(step["step_id"]): str(step["state"])
+        for step in snapshot.steps
+    }
+    failure_states = {
+        "failed",
+        "compensation_failed",
+        "manual_intervention",
+        "result_unknown",
+    }
+    completed_effect_states = {"succeeded", "compensated"}
+
+    precheck = step_states.get("precheck", "pending")
+    precheck_stage = (
+        "complete"
+        if precheck == "succeeded"
+        else "attention"
+        if precheck in failure_states
+        else "current"
+    )
+
+    effect_states = tuple(
+        step_states.get(step_id, "pending")
+        for step_id in ("migrate-schema", "deploy-v2")
+    )
+    verification_states = tuple(
+        step_states.get(step_id, "pending")
+        for step_id in ("health-check", "smoke-test")
+    )
+    post_approval_started = any(
+        state not in {"pending", "ready"}
+        for state in effect_states + verification_states
+    )
+    if snapshot.pending_approval is not None:
+        approval_stage = "current"
+    elif snapshot.summary.state == "cancelled":
+        approval_stage = "attention"
+    elif post_approval_started:
+        approval_stage = "complete"
+    else:
+        approval_stage = "pending"
+
+    if any(state in failure_states for state in effect_states):
+        execution_stage = "attention"
+    elif all(state in completed_effect_states for state in effect_states):
+        execution_stage = "complete"
+    elif approval_stage == "complete":
+        execution_stage = "current"
+    else:
+        execution_stage = "pending"
+
+    if all(state == "succeeded" for state in verification_states):
+        verification_stage = "complete"
+    elif any(
+        state in failure_states or state == "compensated"
+        for state in verification_states
+    ):
+        verification_stage = "attention"
+    elif execution_stage == "complete":
+        verification_stage = "current"
+    else:
+        verification_stage = "pending"
+
+    if snapshot.summary.state == "succeeded":
+        outcome_stage = "complete"
+    elif (
+        snapshot.summary.state in _TERMINAL_STATES
+        or any(state == "result_unknown" for state in effect_states)
+    ):
+        outcome_stage = "attention"
+    elif execution_stage == "current" or verification_stage == "current":
+        outcome_stage = "current"
+    else:
+        outcome_stage = "pending"
+
+    return (
+        GuidanceStageView(stage_id="request", state="complete"),
+        GuidanceStageView(stage_id="plan", state="complete"),
+        GuidanceStageView(stage_id="precheck", state=precheck_stage),
+        GuidanceStageView(stage_id="approval", state=approval_stage),
+        GuidanceStageView(stage_id="execution", state=execution_stage),
+        GuidanceStageView(stage_id="verification", state=verification_stage),
+        GuidanceStageView(stage_id="outcome", state=outcome_stage),
+    )
 
 
 def _plan_annotations(

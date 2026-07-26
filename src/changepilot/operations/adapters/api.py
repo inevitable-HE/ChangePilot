@@ -67,6 +67,10 @@ def create_operations_app(
     def get_run(run_id: str) -> dict[str, object]:
         return service.get_snapshot(run_id).model_dump(mode="json")
 
+    @app.get("/api/runs/{run_id}/guidance")
+    def get_guidance(run_id: str) -> dict[str, object]:
+        return service.get_guidance(run_id).model_dump(mode="json")
+
     @app.get("/api/runs/{run_id}/plan")
     def get_plan(run_id: str) -> dict[str, object]:
         return service.get_plan(run_id).model_dump(mode="json")

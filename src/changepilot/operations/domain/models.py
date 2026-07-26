@@ -118,6 +118,35 @@ class RunSnapshot(OperationsBoundaryModel):
     compensation_error: dict[str, Any] | None
 
 
+class GuidanceStageView(OperationsBoundaryModel):
+    stage_id: Literal[
+        "request",
+        "plan",
+        "precheck",
+        "approval",
+        "execution",
+        "verification",
+        "outcome",
+    ]
+    state: Literal["complete", "current", "pending", "attention"]
+
+
+class RunGuidance(OperationsBoundaryModel):
+    run_id: str
+    goal: str
+    service_id: str
+    current_version: str
+    target_version: str
+    success_conditions: tuple[str, ...]
+    constraints: tuple[str, ...]
+    scenario: DemoScenario
+    headline_code: str
+    next_action_code: str
+    report_available: bool
+    stages: tuple[GuidanceStageView, ...]
+    safety_controls: tuple[str, ...]
+
+
 class ApprovalCommand(OperationsBoundaryModel):
     decision: Literal["approved", "rejected"]
     expected_version: int = Field(ge=0)

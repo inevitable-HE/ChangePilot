@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   BarChart3,
   Check,
   ChevronDown,
@@ -12,6 +13,7 @@ import {
   Filter,
   FlaskConical,
   GitBranch,
+  HelpCircle,
   History,
   Languages,
   ListChecks,
@@ -139,9 +141,65 @@ const CHINESE_COPY = Object.freeze({
   "The V2 health contract returns success.": "V2 健康检查契约返回成功。",
   "Exercise order reads and the versioned business contract.": "验证订单读取与版本化业务契约。",
   "Orders remain readable and the V2 contract is valid.": "订单保持可读，且 V2 契约有效。",
+  "V2 health and order smoke checks pass": "V2 健康检查和订单冒烟测试通过",
+  "Require approval before schema migration": "Schema 迁移前必须经过审批",
+  "Current decision": "当前结论",
+  "Next action": "下一步",
+  "Change target": "变更目标",
+  "Success condition": "成功条件",
+  Constraints: "约束条件",
+  "Active safeguards": "已生效的安全控制",
+  "Waiting for migration approval": "等待数据库迁移审批",
+  "The requested change completed successfully": "请求的变更已成功完成",
+  "The failed change was compensated": "失败的变更已完成补偿",
+  "Execution result must be reconciled": "需要核对未知执行结果",
+  "The change was cancelled": "变更已取消",
+  "Manual attention is required": "需要人工处理",
+  "The guarded workflow is executing": "受保护的工作流正在执行",
+  "Review migration evidence, then approve or reject the high-risk step.": "审阅迁移证据，然后批准或拒绝高风险步骤。",
+  "Download the terminal report and review the final audit record.": "下载终态报告，并审阅最终审计记录。",
+  "Inspect the original failure and reverse compensation evidence.": "检查原始失败原因与反向补偿证据。",
+  "Recover the run so the engine can probe the committed effect without repeating it.": "恢复运行，由引擎探测已提交副作用，避免重复执行。",
+  "Review the rejection evidence; no protected side effect was executed.": "审阅拒绝证据；受保护的副作用没有执行。",
+  "Inspect read-only diagnostics before choosing a manual remediation.": "先检查只读诊断证据，再决定人工处置方案。",
+  "Follow authoritative events while the workflow advances automatically.": "工作流自动推进时，关注权威审计事件。",
+  Request: "请求",
+  "Plan review": "计划审阅",
+  Precheck: "前置检查",
+  Approval: "审批",
+  Execution: "执行",
+  Verification: "验证",
+  Outcome: "结果",
+  complete: "完成",
+  current: "当前",
+  attention: "需关注",
+  "Local sandbox only": "仅限本地沙箱",
+  "Fixed tool contracts": "固定工具契约",
+  "Approval before migration": "迁移前强制审批",
+  "Idempotent side effects": "副作用幂等",
+  "Reverse compensation available": "支持反向补偿",
+  "Durable audit trail": "持久化审计轨迹",
   English: "English",
   Chinese: "中文",
   "Switch language": "切换语言",
+  Guide: "使用指南",
+  "How ChangePilot works": "ChangePilot 如何工作",
+  "ChangePilot turns a service and database change into a reviewable, guarded, and auditable workflow. This demo runs only against an isolated local sandbox.": "ChangePilot 将服务与数据库变更转化为可审阅、受保护、可审计的工作流。本演示仅在隔离的本地沙箱中运行。",
+  "Create a change": "创建变更",
+  "Choose a demo scenario and describe the intended outcome.": "选择演示场景，并描述期望结果。",
+  "Review the generated plan": "审阅生成的计划",
+  "Check dependencies, evidence, validation intent, risk, and compensation before execution.": "执行前检查依赖、证据、验证目标、风险和补偿方案。",
+  "Decide at the approval gate": "在审批门禁做出决定",
+  "The schema migration cannot run until an operator approves its bound tool and arguments.": "只有操作者批准已绑定的工具和参数后，Schema 迁移才会执行。",
+  "Follow the outcome": "跟踪执行结果",
+  "Read the current decision and next action; inspect compensation or recover an unknown result when needed.": "查看当前结论和下一步；必要时检查补偿，或恢复未知执行结果。",
+  "What to try": "建议体验",
+  "Success completes migration, deployment, verification, and reporting.": "成功场景完成迁移、部署、验证和报告。",
+  "Health failure demonstrates reverse compensation to V1.": "健康检查失败场景演示反向补偿回 V1。",
+  "Restart recovery demonstrates reconciliation without applying the migration twice.": "重启恢复场景演示在不重复迁移的前提下核对执行结果。",
+  "Current boundary": "当前边界",
+  "This is a control-plane prototype, not a production deployment platform. Real use still needs enterprise identity, authorization, secrets, infrastructure adapters, backups, and observability.": "这是控制平面原型，并非生产发布平台。真实使用仍需接入企业身份认证、权限、密钥、基础设施适配器、备份和可观测能力。",
+  "Start guided demo": "开始引导演示",
   pending: "待处理",
   ready: "就绪",
   running: "运行中",
@@ -181,6 +239,45 @@ const TERMINAL = new Set([
   "compensation_failed",
   "manual_intervention",
 ]);
+
+const GUIDANCE_HEADLINES = {
+  awaiting_approval: "Waiting for migration approval",
+  change_completed: "The requested change completed successfully",
+  change_compensated: "The failed change was compensated",
+  recovery_needed: "Execution result must be reconciled",
+  change_cancelled: "The change was cancelled",
+  manual_attention: "Manual attention is required",
+  execution_in_progress: "The guarded workflow is executing",
+};
+
+const GUIDANCE_ACTIONS = {
+  review_migration_approval: "Review migration evidence, then approve or reject the high-risk step.",
+  download_run_report: "Download the terminal report and review the final audit record.",
+  inspect_failure_and_compensation: "Inspect the original failure and reverse compensation evidence.",
+  recover_unknown_result: "Recover the run so the engine can probe the committed effect without repeating it.",
+  review_rejection_audit: "Review the rejection evidence; no protected side effect was executed.",
+  inspect_diagnostic_evidence: "Inspect read-only diagnostics before choosing a manual remediation.",
+  monitor_authoritative_events: "Follow authoritative events while the workflow advances automatically.",
+};
+
+const STAGE_LABELS = {
+  request: "Request",
+  plan: "Plan review",
+  precheck: "Precheck",
+  approval: "Approval",
+  execution: "Execution",
+  verification: "Verification",
+  outcome: "Outcome",
+};
+
+const SAFETY_LABELS = {
+  local_sandbox: "Local sandbox only",
+  fixed_tool_contracts: "Fixed tool contracts",
+  approval_before_migration: "Approval before migration",
+  idempotent_effects: "Idempotent side effects",
+  compensation_available: "Reverse compensation available",
+  audit_persisted: "Durable audit trail",
+};
 
 async function api(path, options) {
   const response = await fetch(path, {
@@ -228,6 +325,55 @@ function EmptyState({ onCreate }) {
   );
 }
 
+function GuideDialog({ open, onClose, onStart }) {
+  const { t } = useLanguage();
+  if (!open) return null;
+  const steps = [
+    ["1", "Create a change", "Choose a demo scenario and describe the intended outcome."],
+    ["2", "Review the generated plan", "Check dependencies, evidence, validation intent, risk, and compensation before execution."],
+    ["3", "Decide at the approval gate", "The schema migration cannot run until an operator approves its bound tool and arguments."],
+    ["4", "Follow the outcome", "Read the current decision and next action; inspect compensation or recover an unknown result when needed."],
+  ];
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section className="dialog guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+        <header className="dialog-header">
+          <div>
+            <span className="eyebrow">ChangePilot</span>
+            <h2 id="guide-title">{t("How ChangePilot works")}</h2>
+          </div>
+          <IconButton label={t("Close")} type="button" onClick={onClose}><X size={18} /></IconButton>
+        </header>
+        <p className="guide-intro">{t("ChangePilot turns a service and database change into a reviewable, guarded, and auditable workflow. This demo runs only against an isolated local sandbox.")}</p>
+        <ol className="guide-steps">
+          {steps.map(([number, title, detail]) => (
+            <li key={number}>
+              <span>{number}</span>
+              <div><strong>{t(title)}</strong><p>{t(detail)}</p></div>
+            </li>
+          ))}
+        </ol>
+        <section className="guide-scenarios">
+          <span className="eyebrow">{t("What to try")}</span>
+          <ul>
+            <li><Check size={14} /> {t("Success completes migration, deployment, verification, and reporting.")}</li>
+            <li><RotateCcw size={14} /> {t("Health failure demonstrates reverse compensation to V1.")}</li>
+            <li><RefreshCw size={14} /> {t("Restart recovery demonstrates reconciliation without applying the migration twice.")}</li>
+          </ul>
+        </section>
+        <aside className="guide-boundary">
+          <AlertTriangle size={17} />
+          <div><strong>{t("Current boundary")}</strong><p>{t("This is a control-plane prototype, not a production deployment platform. Real use still needs enterprise identity, authorization, secrets, infrastructure adapters, backups, and observability.")}</p></div>
+        </aside>
+        <footer className="dialog-actions">
+          <button type="button" className="button" onClick={onClose}>{t("Close")}</button>
+          <button type="button" className="button button-primary" onClick={onStart}><Play size={16} /> {t("Start guided demo")}</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function NewChangeDialog({ open, onClose, onCreated }) {
   const { t } = useLanguage();
   const [scenario, setScenario] = useState("success");
@@ -251,8 +397,8 @@ function NewChangeDialog({ open, onClose, onCreated }) {
           current_version: "v1",
           target_version: "v2",
           change_summary: summary,
-          success_conditions: ["V2 health and order smoke checks pass"],
-          constraints: ["Require approval before schema migration"],
+          success_conditions: [t("V2 health and order smoke checks pass")],
+          constraints: [t("Require approval before schema migration")],
           scenario,
         }),
       });
@@ -343,7 +489,42 @@ function RunList({ runs, selected, filter, setFilter, onSelect, onCreate, loadin
   );
 }
 
-function PlanWorkspace({ snapshot, plan, activeStep, setActiveStep }) {
+function RunOrientation({ guidance }) {
+  const { t } = useLanguage();
+  if (!guidance) return <div className="orientation-loading"><LoaderCircle className="spin" size={17} /></div>;
+  return (
+    <section className="run-orientation">
+      <div className="journey-rail" aria-label={t("Execution plan")}>
+        {guidance.stages.map((stage) => (
+          <div className={`journey-stage journey-${stage.state}`} key={stage.stage_id}>
+            <span className="journey-marker">{stage.state === "complete" ? <Check size={13} /> : stage.state === "attention" ? <AlertTriangle size={12} /> : <CircleDot size={12} />}</span>
+            <span>{t(STAGE_LABELS[stage.stage_id])}</span>
+            <small>{t(stage.state)}</small>
+          </div>
+        ))}
+      </div>
+      <div className="orientation-body">
+        <div className="decision-summary">
+          <span className="eyebrow">{t("Current decision")}</span>
+          <h2>{t(GUIDANCE_HEADLINES[guidance.headline_code], {}, guidance.headline_code)}</h2>
+          <p><ArrowRight size={15} /> <span><strong>{t("Next action")}:</strong> {t(GUIDANCE_ACTIONS[guidance.next_action_code], {}, guidance.next_action_code)}</span></p>
+        </div>
+        <dl className="change-context">
+          <div><dt>{t("Change target")}</dt><dd><strong>{guidance.service_id}</strong><span>{guidance.current_version} → {guidance.target_version}</span></dd></div>
+          <div><dt>{t("Change summary")}</dt><dd>{guidance.goal}</dd></div>
+          <div><dt>{t("Success condition")}</dt><dd>{guidance.success_conditions.join(" · ") || "—"}</dd></div>
+          <div><dt>{t("Constraints")}</dt><dd>{guidance.constraints.join(" · ") || "—"}</dd></div>
+        </dl>
+      </div>
+      <div className="safeguard-strip">
+        <span className="eyebrow">{t("Active safeguards")}</span>
+        <div>{guidance.safety_controls.map((control) => <span key={control}><ShieldCheck size={13} /> {t(SAFETY_LABELS[control], {}, control)}</span>)}</div>
+      </div>
+    </section>
+  );
+}
+
+function PlanWorkspace({ snapshot, plan, guidance, activeStep, setActiveStep }) {
   const { t } = useLanguage();
   const stateById = new Map(snapshot?.steps?.map((step) => [step.step_id, step.state]));
   return (
@@ -360,6 +541,7 @@ function PlanWorkspace({ snapshot, plan, activeStep, setActiveStep }) {
         <span><ShieldCheck size={15} /> {t("policy guarded")}</span>
         <span><History size={15} /> {t("{count} events", { count: snapshot?.summary.last_event_sequence ?? 0 })}</span>
       </div>
+      <RunOrientation guidance={guidance} />
       <section className="step-list" aria-label={t("Execution plan")}>
         {plan?.steps.map((step, index) => {
           const state = stateById.get(step.step_id) || "pending";
@@ -432,7 +614,7 @@ function AuditPanel({ snapshot, events, selectedEvent, setSelectedEvent, onDecis
       <ApprovalPanel snapshot={snapshot} onDecision={onDecision} onRecover={onRecover} busy={busy} />
       <div className="panel-heading audit-heading">
         <div><span className="eyebrow">{t("Authoritative log")}</span><h2>{t("Audit timeline")}</h2></div>
-        {snapshot && <a className="icon-button" title={t("Download report")} aria-label={t("Download report")} href={`/api/runs/${snapshot.summary.run_id}/report.md`} target="_blank"><Download size={17} /></a>}
+        {snapshot && TERMINAL.has(snapshot.summary.state) && <a className="icon-button" title={t("Download report")} aria-label={t("Download report")} href={`/api/runs/${snapshot.summary.run_id}/report.md`} target="_blank"><Download size={17} /></a>}
       </div>
       <div className="audit-list">
         {events.length === 0 && <p className="quiet">{t("No events recorded.")}</p>}
@@ -563,6 +745,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
   const [plan, setPlan] = useState(null);
+  const [guidance, setGuidance] = useState(null);
   const [events, setEvents] = useState([]);
   const [activeStep, setActiveStep] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -571,6 +754,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState(false);
+  const [guide, setGuide] = useState(
+    () => window.localStorage.getItem("changepilot-guide-seen") !== "1",
+  );
   const [view, setView] = useState("runs");
   const [evaluations, setEvaluations] = useState([]);
   const t = useCallback((text, values = {}, fallback = text) => {
@@ -594,13 +780,15 @@ export default function App() {
   const loadSelected = useCallback(async (runId) => {
     if (!runId) return;
     try {
-      const [nextSnapshot, nextPlan, nextEvents] = await Promise.all([
+      const [nextSnapshot, nextPlan, nextGuidance, nextEvents] = await Promise.all([
         api(`/api/runs/${runId}`),
         api(`/api/runs/${runId}/plan`),
+        api(`/api/runs/${runId}/guidance`),
         api(`/api/runs/${runId}/events`),
       ]);
       setSnapshot(nextSnapshot);
       setPlan(nextPlan);
+      setGuidance(nextGuidance);
       setEvents(nextEvents.events);
       setActiveStep((current) => current || nextPlan.steps[0]?.step_id);
       setError("");
@@ -608,7 +796,7 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadRuns(); api("/api/evaluations").then(setEvaluations).catch(() => {}); }, [loadRuns]);
-  useEffect(() => { loadSelected(selected); }, [selected, loadSelected]);
+  useEffect(() => { setGuidance(null); loadSelected(selected); }, [selected, loadSelected]);
   useEffect(() => {
     window.localStorage.setItem("changepilot-language", language);
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
@@ -652,6 +840,11 @@ export default function App() {
     finally { setBusy(false); }
   }
 
+  function closeGuide() {
+    window.localStorage.setItem("changepilot-guide-seen", "1");
+    setGuide(false);
+  }
+
   const totals = useMemo(() => ({
     active: runs.filter((run) => !TERMINAL.has(run.state)).length,
     approvals: runs.filter((run) => run.pending_approval).length,
@@ -668,6 +861,7 @@ export default function App() {
           </nav>
           <div className="top-actions">
             <div className="top-stats"><span><Clock3 size={14} /> {t("{count} active", { count: totals.active })}</span><span><ShieldCheck size={14} /> {t("{count} approvals", { count: totals.approvals })}</span><span className="connection"><span /> {t("local")}</span></div>
+            <button className="top-help" title={t("Guide")} onClick={() => setGuide(true)}><HelpCircle size={14} /> {t("Guide")}</button>
             <div className="language-switch" role="group" aria-label={t("Switch language")}>
               <Languages size={14} />
               <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")} aria-pressed={language === "en"}>{t("English")}</button>
@@ -680,10 +874,11 @@ export default function App() {
           runs.length === 0 && !loading ? <EmptyState onCreate={() => setDialog(true)} /> :
           <div className="operations-grid">
             <RunList runs={runs} selected={selected} filter={filter} setFilter={setFilter} onSelect={setSelected} onCreate={() => setDialog(true)} loading={loading} />
-            <PlanWorkspace snapshot={snapshot} plan={plan} activeStep={activeStep} setActiveStep={setActiveStep} />
+            <PlanWorkspace snapshot={snapshot} plan={plan} guidance={guidance} activeStep={activeStep} setActiveStep={setActiveStep} />
             <AuditPanel snapshot={snapshot} events={events} selectedEvent={selectedEvent} setSelectedEvent={setSelectedEvent} onDecision={decide} onRecover={recover} busy={busy} />
           </div>
         )}
+        <GuideDialog open={guide} onClose={closeGuide} onStart={() => { closeGuide(); setDialog(true); }} />
         <NewChangeDialog open={dialog} onClose={() => setDialog(false)} onCreated={(runId) => { setDialog(false); setSelected(runId); loadRuns(); }} />
       </div>
     </LanguageContext.Provider>

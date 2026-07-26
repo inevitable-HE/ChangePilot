@@ -88,8 +88,24 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
 
     snapshot = client.get(f"/api/runs/{run_id}").json()
     plan = client.get(f"/api/runs/{run_id}/plan").json()
+    guidance = client.get(f"/api/runs/{run_id}/guidance").json()
 
     assert snapshot["summary"]["state"] == "waiting_approval"
+    assert guidance["headline_code"] == "awaiting_approval"
+    assert guidance["next_action_code"] == "review_migration_approval"
+    assert guidance["goal"] == _request()["change_summary"]
+    assert guidance["report_available"] is False
+    assert {
+        item["stage_id"]: item["state"] for item in guidance["stages"]
+    } == {
+        "request": "complete",
+        "plan": "complete",
+        "precheck": "complete",
+        "approval": "current",
+        "execution": "pending",
+        "verification": "pending",
+        "outcome": "pending",
+    }
     migration = next(
         step for step in plan["steps"] if step["step_id"] == "migrate-schema"
     )
@@ -113,6 +129,15 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
     )
     assert approved.status_code == 200
     assert approved.json()["summary"]["state"] == "succeeded"
+    completed_guidance = client.get(
+        f"/api/runs/{run_id}/guidance"
+    ).json()
+    assert completed_guidance["headline_code"] == "change_completed"
+    assert completed_guidance["report_available"] is True
+    assert all(
+        item["state"] == "complete"
+        for item in completed_guidance["stages"]
+    )
 
     report = client.get(f"/api/runs/{run_id}/report.json")
     markdown = client.get(f"/api/runs/{run_id}/report.md")
@@ -175,6 +200,13 @@ def test_recovery_command_reconciles_unknown_effect_once(operations) -> None:
         step["state"] == "result_unknown"
         for step in interrupted_snapshot["steps"]
     )
+    guidance = client.get(f"/api/runs/{run_id}/guidance").json()
+    assert guidance["headline_code"] == "recovery_needed"
+    assert guidance["next_action_code"] == "recover_unknown_result"
+    assert next(
+        item for item in guidance["stages"]
+        if item["stage_id"] == "execution"
+    )["state"] == "attention"
 
     recovered = client.post(
         f"/api/runs/{run_id}/recover",
@@ -185,6 +217,30 @@ def test_recovery_command_reconciles_unknown_effect_once(operations) -> None:
     assert recovered.status_code == 200
     assert recovered.json()["summary"]["state"] == "succeeded"
     assert service.get_tool_call_count(run_id, "schema.migrate") == 1
+
+
+def test_guidance_explains_compensated_outcome(operations) -> None:
+    _, client = operations
+    run_id = _submit(client, scenario="compensation")["run_id"]
+    waiting = client.get(f"/api/runs/{run_id}").json()
+
+    result = client.post(
+        f"/api/runs/{run_id}/approval",
+        json=_approval(waiting),
+    )
+
+    assert result.status_code == 200
+    assert result.json()["summary"]["state"] == "compensated"
+    guidance = client.get(f"/api/runs/{run_id}/guidance").json()
+    assert guidance["headline_code"] == "change_compensated"
+    assert guidance["next_action_code"] == (
+        "inspect_failure_and_compensation"
+    )
+    assert guidance["report_available"] is True
+    assert next(
+        item for item in guidance["stages"]
+        if item["stage_id"] == "verification"
+    )["state"] == "attention"
 
 
 def test_recovery_is_rejected_without_unknown_result(operations) -> None:

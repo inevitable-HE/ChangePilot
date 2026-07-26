@@ -27,6 +27,8 @@ redaction. The API exposes:
 
 - structured request submission and request history;
 - run lists, snapshots, plan annotations, and cursor-based events;
+- authoritative run guidance covering the current stage, next action, change
+  context, and active safety controls;
 - version-bound approval or rejection;
 - revision-bound recovery;
 - SSE audit delivery with polling as a client fallback;
@@ -52,6 +54,8 @@ The operations workspace has three responsibilities:
 The console consumes SSE events after the latest observed sequence and
 periodically reconciles with the complete server snapshot. This makes event
 delivery useful for responsiveness without making it the source of truth.
+Operator guidance follows the same rule: the API derives it from the
+authoritative snapshot, while the console only translates and presents it.
 
 ## Evaluation
 
