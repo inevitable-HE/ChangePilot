@@ -65,6 +65,12 @@ class ToolRegistry:
     def descriptor_for(self, name: str, version: str) -> ToolDescriptor:
         return self.resolve(name, version).descriptor
 
+    def descriptors(self) -> tuple[ToolDescriptor, ...]:
+        return tuple(
+            self._tools[key].descriptor
+            for key in sorted(self._tools)
+        )
+
     def validate_arguments(
         self,
         name: str,

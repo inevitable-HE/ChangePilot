@@ -20,6 +20,7 @@ class DemoScenario(StrEnum):
     SUCCESS = "success"
     COMPENSATION = "compensation"
     RECOVERY = "recovery"
+    READINESS = "readiness"
 
 
 class RequestStatus(StrEnum):
@@ -97,6 +98,57 @@ class PlanView(OperationsBoundaryModel):
     definition_version: int
     definition_digest: str
     steps: tuple[PlanStepView, ...]
+
+
+class PlanningEvidenceView(OperationsBoundaryModel):
+    document_id: str
+    document_version: str
+    chunk_id: str
+    location: str
+    trust_level: str
+    lexical_rank: int | None
+    vector_rank: int | None
+    hybrid_score: float
+    excerpt: str
+
+
+class PlanningModelUsageView(OperationsBoundaryModel):
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    estimated_cost_microunits: int
+    cache_hits: int
+
+
+class PlanningStepView(OperationsBoundaryModel):
+    step_id: str
+    rationale: str
+    validation_intent: str
+    evidence_refs: tuple[str, ...]
+
+
+class PlanningTraceView(OperationsBoundaryModel):
+    session_id: str
+    mode: Literal["deterministic_mock", "deepseek"]
+    result: Literal[
+        "clarification_required",
+        "plan_ready",
+        "planning_rejected",
+        "budget_exhausted",
+    ]
+    model: str
+    prompt_version: str
+    tool_policy_version: str
+    knowledge_snapshot_digest: str
+    query: str
+    plan_version: int | None
+    validation_status: Literal["passed", "needs_input", "rejected"]
+    repair_count: int
+    stages: tuple[str, ...]
+    evidence: tuple[PlanningEvidenceView, ...]
+    steps: tuple[PlanningStepView, ...]
+    model_usage: PlanningModelUsageView
 
 
 class RunSummary(OperationsBoundaryModel):

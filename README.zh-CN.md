@@ -108,9 +108,15 @@ npm run dev
 ```
 
 访问 `http://127.0.0.1:5173`。控制台支持结构化变更提交、计划与知识证据
-审阅、受保护的批准或拒绝、带轮询降级的实时审计事件、显式恢复、报告导出
-和评测历史。顶栏可切换中英文界面，语言选择会保存在本地浏览器中。
-`success`、`compensation`、`recovery` 三个场景均为隔离的本地演示。
+审阅，并会在执行前运行完整 Agent 规划链路。“Agent 规划轨迹”会展示
+LangGraph 节点、RAG 引用、计划校验、知识快照、模型信息、调用次数和 Token
+用量。操作者随后可以审阅工具绑定计划，批准或拒绝风险动作，跟踪实时审计
+事件，恢复中断任务并导出报告。顶栏可切换中英文界面，语言选择会保存在
+本地浏览器中。
+
+`success`、`compensation`、`recovery` 用于演示写入型变更工作流；
+`readiness` 使用另一种目标生成三步只读计划，不包含迁移、部署、审批或补偿。
+所有场景都只作用于隔离的本地沙箱。
 
 安装 Python 与前端依赖后，也可以用一条命令同时运行两项本地服务，按
 `Ctrl+C` 统一停止：
@@ -208,6 +214,13 @@ $env:CHANGEPILOT_DEEPSEEK_API_KEY = "..."
 $env:CHANGEPILOT_LLM_BASE_URL = "https://api.deepseek.com"
 $env:CHANGEPILOT_LLM_MODEL = "deepseek-v4-flash"
 $env:CHANGEPILOT_LLM_TIMEOUT_SECONDS = "30"
+```
+
+运营 API 默认使用离线确定性规划模型，但请求仍会经过真实的 RAG、LangGraph、
+结构化生成、计划校验和工作流映射链路。如需明确让 DeepSeek 生成控制台计划：
+
+```powershell
+$env:CHANGEPILOT_PLANNER_MODE = "deepseek"
 ```
 
 `BudgetedModelGateway` 会限制调用次数、Token 和可选的预估费用，对相同请求

@@ -13,13 +13,16 @@ changes**. It turns a service-and-database upgrade goal into an evidence-cited
 plan, waits for human approval before dangerous effects, and then executes,
 verifies, compensates, or recovers through a reliable workflow runtime.
 
-The current release deliberately demonstrates one concrete change:
+The current release deliberately bounds the Agent to one service and two
+change intents:
 
 > Upgrade `order-service` and its database schema from V1 to V2.
+>
+> Assess the current V1 service and database readiness without changing them.
 
-A fixed scenario makes planning, tool calls, approval, idempotency,
-compensation, and recovery testable. V1 does not hide its safety boundary
-behind arbitrary shell or SQL execution.
+This bounded domain makes planning differences, tool calls, approval,
+idempotency, compensation, and recovery testable. V1 does not hide its safety
+boundary behind arbitrary shell or SQL execution.
 
 ## The Problem
 
@@ -80,6 +83,8 @@ Start with the run orientation at the top of the center workspace:
 4. **Change context** shows the target, versions, success condition, and
    constraints.
 5. **Active safeguards** lists the controls actually enabled for the run.
+6. **Agent planning trace** shows each planning stage, exact RAG evidence,
+   validation status, knowledge snapshot, and model budget usage.
 
 The remaining workspace is organized by responsibility:
 
@@ -120,6 +125,12 @@ The terminal state is `compensated`.
 the workflow acknowledged its result. Recovery probes the migration ledger,
 confirms the existing effect, and continues without applying the migration
 twice.
+
+**Readiness assessment** demonstrates that the plan is not a fixed V1-to-V2
+template. The same planning pipeline interprets a read-only goal and produces
+only service inspection, database inspection, and compatibility precheck
+steps. It reaches success without migration, deployment, approval, or
+compensation.
 
 ## Reliability Guarantees
 

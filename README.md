@@ -114,10 +114,16 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173`. The console supports structured change
-submission, plan and evidence review, guarded approval or rejection, live audit
-events with polling fallback, explicit recovery, report export, and evaluation
-history. Its English/Chinese switch persists the selected interface language
-locally. The `success`, `compensation`, and `recovery` scenarios are isolated
+submission and runs the complete planning chain before execution. The **Agent
+planning trace** shows the LangGraph stages, RAG citations, plan validation,
+knowledge snapshot, model identity, calls, and token usage. Operators can then
+review the bound tool plan, approve or reject guarded effects, follow live audit
+events, recover interrupted work, and export a report. Its English/Chinese
+switch persists the selected interface language locally.
+
+The `success`, `compensation`, and `recovery` scenarios exercise the write
+workflow. `readiness` asks a different goal and produces a three-step read-only
+plan with no migration, deployment, approval, or compensation. All are isolated
 local demonstrations.
 
 After installing both Python and console dependencies, one command can keep
@@ -221,6 +227,14 @@ $env:CHANGEPILOT_DEEPSEEK_API_KEY = "..."
 $env:CHANGEPILOT_LLM_BASE_URL = "https://api.deepseek.com"
 $env:CHANGEPILOT_LLM_MODEL = "deepseek-v4-flash"
 $env:CHANGEPILOT_LLM_TIMEOUT_SECONDS = "30"
+```
+
+The operations API uses the offline deterministic planner by default while still
+passing through the real RAG, LangGraph, structured-generation, validation, and
+workflow-mapping path. To let DeepSeek propose console plans explicitly:
+
+```powershell
+$env:CHANGEPILOT_PLANNER_MODE = "deepseek"
 ```
 
 `BudgetedModelGateway` enforces call, token, and optional estimated-cost limits,

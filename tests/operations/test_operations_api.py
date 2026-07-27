@@ -28,13 +28,26 @@ def operations(tmp_path: Path):
 
 
 def _request(*, scenario: str = "success") -> dict[str, object]:
+    readiness = scenario == "readiness"
     return {
         "service_id": "order-service",
         "current_version": "v1",
-        "target_version": "v2",
-        "change_summary": "Upgrade the order service and database schema.",
-        "success_conditions": ["V2 health and smoke checks pass"],
-        "constraints": ["Require approval before schema migration"],
+        "target_version": "v1" if readiness else "v2",
+        "change_summary": (
+            "Assess whether the order service is ready for a V2 upgrade."
+            if readiness
+            else "Upgrade the order service and database schema."
+        ),
+        "success_conditions": (
+            ["Current service and schema satisfy the upgrade prerequisites"]
+            if readiness
+            else ["V2 health and smoke checks pass"]
+        ),
+        "constraints": (
+            ["Read-only checks only"]
+            if readiness
+            else ["Require approval before schema migration"]
+        ),
         "scenario": scenario,
     }
 
@@ -88,9 +101,25 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
 
     snapshot = client.get(f"/api/runs/{run_id}").json()
     plan = client.get(f"/api/runs/{run_id}/plan").json()
+    planning = client.get(f"/api/runs/{run_id}/planning").json()
     guidance = client.get(f"/api/runs/{run_id}/guidance").json()
 
     assert snapshot["summary"]["state"] == "waiting_approval"
+    assert planning["mode"] == "deterministic_mock"
+    assert planning["result"] == "plan_ready"
+    assert planning["validation_status"] == "passed"
+    assert planning["model_usage"]["calls"] == 1
+    assert planning["evidence"]
+    assert any(
+        item["lexical_rank"] is not None for item in planning["evidence"]
+    )
+    assert planning["stages"] == [
+        "normalize_request",
+        "check_required_context",
+        "retrieve_knowledge",
+        "generate_plan",
+        "validate_plan",
+    ]
     assert guidance["headline_code"] == "awaiting_approval"
     assert guidance["next_action_code"] == "review_migration_approval"
     assert guidance["goal"] == _request()["change_summary"]
@@ -112,7 +141,10 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
     assert migration["risk"] == "high"
     assert migration["approval_required"] is True
     assert migration["compensation_tool"]["name"] == "schema.rollback"
-    assert "schema-migration@1.0#procedure" in migration["evidence_refs"]
+    assert migration["evidence_refs"]
+    assert set(migration["evidence_refs"]).issubset(
+        {item["chunk_id"] for item in planning["evidence"]}
+    )
     assert migration["validation_intent"]
 
     before = client.get(f"/api/runs/{run_id}/events").json()
@@ -143,7 +175,7 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
     markdown = client.get(f"/api/runs/{run_id}/report.md")
     assert report.status_code == 200
     assert report.json()["run"]["summary"]["state"] == "succeeded"
-    assert report.json()["model_usage"]["calls"] == 0
+    assert report.json()["model_usage"]["calls"] == 1
     assert markdown.status_code == 200
     assert "# ChangePilot Run Report" in markdown.text
 
@@ -164,6 +196,30 @@ def test_successful_operator_flow_exposes_plan_events_and_reports(
     ]
     assert resumed_ids
     assert all(sequence > cursor for sequence in resumed_ids)
+
+
+def test_readiness_request_generates_a_distinct_read_only_plan(
+    operations,
+) -> None:
+    service, client = operations
+
+    request = _submit(client, scenario="readiness")
+    run_id = request["run_id"]
+    snapshot = client.get(f"/api/runs/{run_id}").json()
+    plan = client.get(f"/api/runs/{run_id}/plan").json()
+    planning = client.get(f"/api/runs/{run_id}/planning").json()
+
+    assert snapshot["summary"]["state"] == "succeeded"
+    assert [step["step_id"] for step in plan["steps"]] == [
+        "inspect-service",
+        "inspect-db",
+        "precheck",
+    ]
+    assert all(step["approval_required"] is False for step in plan["steps"])
+    assert planning["model_usage"]["calls"] == 1
+    assert planning["plan_version"] == 1
+    assert planning["evidence"]
+    assert service.get_tool_call_count(run_id, "schema.migrate") == 0
 
 
 def test_stale_approval_is_rejected_with_authoritative_state(
