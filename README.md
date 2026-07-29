@@ -2,6 +2,8 @@
 
 [简体中文](README.zh-CN.md)
 
+[Published documentation](https://inevitable-HE.github.io/ChangePilot/)
+
 New to the project? Start with the [user guide](docs/user-guide.md) to
 understand the scenario, operator workflow, reliability model, and current
 boundaries before running the demo.
