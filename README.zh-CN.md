@@ -4,7 +4,7 @@
 
 [在线文档](https://inevitable-HE.github.io/ChangePilot/)
 
-第一次接触项目，建议先阅读[中文用户指南](docs/user-guide.zh-CN.md)，理解应用场景、
+第一次接触项目，建议先阅读[中文用户指南](docs/zh/user-guide.md)，理解应用场景、
 操作者流程、可靠性模型和当前边界，再运行演示。
 
 ChangePilot 是一个建立在可靠工作流运行时之上的受约束变更规划 Agent。
@@ -237,10 +237,10 @@ git diff --check
 
 架构说明：
 
-- `docs/architecture/agent-planning-and-knowledge.md`：Agent 边界与知识检索。
-- `docs/architecture/change-execution-sandbox.md`：本地执行与恢复场景。
-- `docs/architecture/reliable-workflow-core.md`：事务、审批、恢复、补偿与审计。
-- `docs/architecture/operations-console-and-evaluation.md`：运营控制台与评测边界。
+- `docs/zh/architecture/agent-planning-and-knowledge.md`：Agent 边界与知识检索。
+- `docs/zh/architecture/change-execution-sandbox.md`：本地执行与恢复场景。
+- `docs/zh/architecture/reliable-workflow-core.md`：事务、审批、恢复、补偿与审计。
+- `docs/zh/architecture/operations-console-and-evaluation.md`：运营控制台与评测边界。
 
 ## 参与开发
 

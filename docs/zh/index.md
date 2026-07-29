@@ -6,7 +6,7 @@ ChangePilot 是一个面向高风险研发变更的受限 AI Agent。它把自�
 
 ## 从哪里开始
 
-- **第一次了解项目**：阅读[中文用户指南](user-guide.zh-CN.md)，用一个订单服务升级
+- **第一次了解项目**：阅读[中文用户指南](user-guide.md)，用一个订单服务升级
   场景理解完整闭环。
 - **准备本地演示**：按照用户指南的“五分钟成功演示”启动 API 和运营控制台。
 - **理解 Agent 边界**：阅读[Agent 规划与知识检索](architecture/agent-planning-and-knowledge.md)，
