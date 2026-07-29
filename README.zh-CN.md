@@ -2,6 +2,8 @@
 
 [English](README.md)
 
+[在线文档](https://inevitable-HE.github.io/ChangePilot/)
+
 第一次接触项目，建议先阅读[中文用户指南](docs/user-guide.zh-CN.md)，理解应用场景、
 操作者流程、可靠性模型和当前边界，再运行演示。
 
