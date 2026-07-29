@@ -1,7 +1,5 @@
 # ChangePilot User Guide
 
-[简体中文](user-guide.zh-CN.md)
-
 On the first visit, the console opens a short in-product guide automatically.
 Use **Guide** in the top bar to reopen it, or choose **Start guided demo** to
 move directly into scenario creation.

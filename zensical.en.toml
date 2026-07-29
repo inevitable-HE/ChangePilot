@@ -1,24 +1,24 @@
 [project]
 site_name = "ChangePilot Documentation"
-site_url = "https://inevitable-he.github.io/ChangePilot/"
-site_description = "ChangePilot 使用指南、可靠性设计与 Agent 架构文档。"
+site_url = "https://inevitable-he.github.io/ChangePilot/en/"
+site_description = "ChangePilot user guide, reliability design, and Agent architecture."
 site_author = "Kevin Yuan"
 copyright = "Copyright &copy; 2026 ChangePilot"
-docs_dir = "docs/zh"
-site_dir = "site"
+docs_dir = "docs/en"
+site_dir = "site/en"
 repo_url = "https://github.com/inevitable-HE/ChangePilot"
 repo_name = "inevitable-HE/ChangePilot"
-edit_uri = "edit/master/docs/zh/"
+edit_uri = "edit/master/docs/en/"
 extra_javascript = ["javascripts/language-switch.js"]
 nav = [
-  { "首页" = "index.md" },
-  { "使用指南" = "user-guide.md" },
-  { "架构设计" = [
-    { "架构总览" = "architecture/index.md" },
-    { "可靠工作流内核" = "architecture/reliable-workflow-core.md" },
-    { "Agent 规划与知识检索" = "architecture/agent-planning-and-knowledge.md" },
-    { "本地执行沙箱" = "architecture/change-execution-sandbox.md" },
-    { "运营控制台与评测" = "architecture/operations-console-and-evaluation.md" },
+  { "Home" = "index.md" },
+  { "User Guide" = "user-guide.md" },
+  { "Architecture" = [
+    { "Overview" = "architecture/index.md" },
+    { "Reliable Workflow Core" = "architecture/reliable-workflow-core.md" },
+    { "Agent Planning and Knowledge" = "architecture/agent-planning-and-knowledge.md" },
+    { "Change Execution Sandbox" = "architecture/change-execution-sandbox.md" },
+    { "Operations Console and Evaluation" = "architecture/operations-console-and-evaluation.md" },
   ] },
   { "GitHub" = "https://github.com/inevitable-HE/ChangePilot" },
 ]
@@ -31,7 +31,7 @@ alternate = [
 
 [project.theme]
 variant = "modern"
-language = "zh"
+language = "en"
 features = [
   "content.action.edit",
   "content.action.view",
