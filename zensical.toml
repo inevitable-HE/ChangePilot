@@ -1,0 +1,50 @@
+[project]
+site_name = "ChangePilot Documentation"
+site_url = "https://inevitable-he.github.io/ChangePilot/"
+site_description = "ChangePilot 使用指南、可靠性设计与 Agent 架构文档。"
+site_author = "Kevin Yuan"
+copyright = "Copyright &copy; 2026 ChangePilot"
+docs_dir = "docs/zh"
+site_dir = "site"
+repo_url = "https://github.com/inevitable-HE/ChangePilot"
+repo_name = "inevitable-HE/ChangePilot"
+edit_uri = "edit/master/docs/zh/"
+extra_javascript = ["javascripts/language-switch.js"]
+nav = [
+  { "首页" = "index.md" },
+  { "使用指南" = "user-guide.md" },
+  { "架构设计" = [
+    { "架构总览" = "architecture/index.md" },
+    { "可靠工作流内核" = "architecture/reliable-workflow-core.md" },
+    { "Agent 规划与知识检索" = "architecture/agent-planning-and-knowledge.md" },
+    { "本地执行沙箱" = "architecture/change-execution-sandbox.md" },
+    { "运营控制台与评测" = "architecture/operations-console-and-evaluation.md" },
+  ] },
+  { "GitHub" = "https://github.com/inevitable-HE/ChangePilot" },
+]
+
+[project.extra]
+alternate = [
+  { name = "简体中文", link = "/ChangePilot/", lang = "zh" },
+  { name = "English", link = "/ChangePilot/en/", lang = "en" },
+]
+
+[project.theme]
+variant = "modern"
+language = "zh"
+features = [
+  "content.action.edit",
+  "content.action.view",
+  "navigation.instant",
+  "navigation.instant.progress",
+  "navigation.tracking",
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.indexes",
+  "navigation.path",
+  "navigation.top",
+  "toc.follow",
+]
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"

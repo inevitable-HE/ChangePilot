@@ -2,7 +2,9 @@
 
 [简体中文](README.zh-CN.md)
 
-New to the project? Start with the [user guide](docs/user-guide.md) to
+[Published documentation](https://inevitable-HE.github.io/ChangePilot/)
+
+New to the project? Start with the [user guide](docs/en/user-guide.md) to
 understand the scenario, operator workflow, reliability model, and current
 boundaries before running the demo.
 
@@ -260,13 +262,13 @@ openspec validate add-operations-console-and-evals --strict --json --no-interact
 git diff --check
 ```
 
-See `docs/architecture/agent-planning-and-knowledge.md` for the Agent boundary
-and `docs/architecture/change-execution-sandbox.md` for the local execution and
+See `docs/en/architecture/agent-planning-and-knowledge.md` for the Agent boundary
+and `docs/en/architecture/change-execution-sandbox.md` for the local execution and
 recovery scenarios. Runtime transactions, recovery, approval, compensation,
 and audit behavior are documented in
-`docs/architecture/reliable-workflow-core.md`. The Phase 4 operator and
+`docs/en/architecture/reliable-workflow-core.md`. The Phase 4 operator and
 evaluation boundary is described in
-`docs/architecture/operations-console-and-evaluation.md`.
+`docs/en/architecture/operations-console-and-evaluation.md`.
 
 ## Contributing
 
