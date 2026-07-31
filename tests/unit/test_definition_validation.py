@@ -152,6 +152,7 @@ def test_project_uses_standard_backend_and_declares_planned_dependencies() -> No
         "alembic>=1.14,<2",
         "langgraph>=1.0,<2",
         "openai>=2.0,<3",
+        "httpx>=0.28,<1",
         "pyyaml>=6.0,<7",
         "fastapi>=0.116,<1",
         "uvicorn>=0.35,<1",

@@ -30,7 +30,7 @@ def create_operations_app(
     report_roots = tuple(Path(root).resolve() for root in evaluation_roots)
     app = FastAPI(
         title="ChangePilot Operations API",
-        version="0.1.0",
+        version="0.2.0",
     )
 
     @app.exception_handler(LookupError)
@@ -47,8 +47,11 @@ def create_operations_app(
         return {"status": "ok"}
 
     @app.post("/api/requests", status_code=201)
-    def submit_request(payload: ChangeRequestInput) -> dict[str, object]:
-        return service.submit_request(payload).model_dump(mode="json")
+    async def submit_request(
+        payload: ChangeRequestInput,
+    ) -> dict[str, object]:
+        result = await asyncio.to_thread(service.submit_request, payload)
+        return result.model_dump(mode="json")
 
     @app.get("/api/requests")
     def list_requests() -> list[dict[str, object]]:

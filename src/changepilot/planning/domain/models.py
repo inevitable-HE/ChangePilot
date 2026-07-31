@@ -30,6 +30,7 @@ class ChangeRequest(PlanningBoundaryModel):
     service_id: str | None = None
     current_version: str | None = None
     target_version: str | None = None
+    pull_request_url: str | None = None
     change_summary: str
     success_conditions: tuple[str, ...] = ()
     constraints: tuple[str, ...] = ()
@@ -38,6 +39,7 @@ class ChangeRequest(PlanningBoundaryModel):
         "service_id",
         "current_version",
         "target_version",
+        "pull_request_url",
         "change_summary",
     )
     @classmethod

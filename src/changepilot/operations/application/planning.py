@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from changepilot.operations.domain.models import (
     PlanningEvidenceView,
     PlanningModelUsageView,
     PlanningStepView,
+    PlanningToolCallView,
     PlanningTraceView,
 )
 from changepilot.planning.adapters.knowledge.sqlite import (
@@ -19,9 +21,10 @@ from changepilot.planning.adapters.knowledge.sqlite import (
     initialize_planning_schema,
 )
 from changepilot.planning.adapters.models.deepseek import (
+    DeepSeekAsyncChatModel,
     DeepSeekConfig,
-    DeepSeekModelGateway,
 )
+from changepilot.planning.adapters.tools.github import GitHubPullRequestTool
 from changepilot.planning.adapters.persistence import (
     SQLitePlanningRepository,
 )
@@ -32,14 +35,18 @@ from changepilot.planning.application.ingestion import (
 )
 from changepilot.planning.application.mapping import WorkflowDefinitionMapper
 from changepilot.planning.application.model_gateway import (
-    BudgetedModelGateway,
+    AsyncBudgetedModelGateway,
     InMemoryModelCache,
     InMemoryUsageRecorder,
     ModelBudget,
 )
-from changepilot.planning.application.nodes import PlanningNodes
+from changepilot.planning.application.nodes import AsyncPlanningNodes
 from changepilot.planning.application.retrieval import HybridRetriever
-from changepilot.planning.application.services import PlanningService
+from changepilot.planning.application.services import AsyncPlanningService
+from changepilot.planning.application.tool_calling import (
+    AsyncToolCallingModelGateway,
+    ReadOnlyToolRegistry,
+)
 from changepilot.planning.application.validation import PlanValidator
 from changepilot.planning.domain.models import (
     BudgetExhausted,
@@ -59,7 +66,7 @@ from changepilot.planning.domain.policies import (
     PlanningToolPolicy,
 )
 from changepilot.planning.ports.models import (
-    ModelGateway,
+    AsyncModelGateway,
     ModelRequest,
     ModelResponse,
     ModelUsage,
@@ -72,7 +79,7 @@ from changepilot.workflow.ports.tools import ToolRisk
 
 
 _ROOT = Path(__file__).resolve().parents[4]
-_PROMPT_VERSION = "operations-planning-v1"
+_PROMPT_VERSION = "operations-planning-v2"
 _POLICY_VERSION = "sandbox-policy-v1"
 
 
@@ -265,7 +272,40 @@ class DeterministicSandboxModelGateway:
         )
 
 
+class AsyncDeterministicSandboxModelGateway:
+    def __init__(self, inner: DeterministicSandboxModelGateway) -> None:
+        self._inner = inner
+
+    @property
+    def traces(self) -> tuple[object, ...]:
+        return ()
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        return self._inner.generate(request)
+
+
 def plan_change(
+    *,
+    root: Path,
+    request_id: str,
+    request: ChangeRequestInput,
+    tools: ToolRegistry,
+    sandbox_id: str,
+    database_fingerprint: str,
+) -> AgentPlanningOutcome:
+    return asyncio.run(
+        plan_change_async(
+            root=root,
+            request_id=request_id,
+            request=request,
+            tools=tools,
+            sandbox_id=sandbox_id,
+            database_fingerprint=database_fingerprint,
+        )
+    )
+
+
+async def plan_change_async(
     *,
     root: Path,
     request_id: str,
@@ -293,19 +333,34 @@ def plan_change(
         "CHANGEPILOT_PLANNER_MODE",
         "deterministic_mock",
     ).strip()
-    inner: ModelGateway
+    inner: AsyncModelGateway
     if mode == "deepseek":
-        inner = DeepSeekModelGateway(DeepSeekConfig.from_env())
+        discovery_tools = (
+            ()
+            if request.pull_request_url is None
+            else (
+                GitHubPullRequestTool(
+                    allowed_pull_request_url=request.pull_request_url,
+                ),
+            )
+        )
+        inner = AsyncToolCallingModelGateway(
+            model=DeepSeekAsyncChatModel(DeepSeekConfig.from_env()),
+            tools=ReadOnlyToolRegistry(discovery_tools),
+            max_tool_rounds=2,
+        )
     elif mode == "deterministic_mock":
-        inner = DeterministicSandboxModelGateway(
-            sandbox_id=sandbox_id,
-            database_fingerprint=database_fingerprint,
+        inner = AsyncDeterministicSandboxModelGateway(
+            DeterministicSandboxModelGateway(
+                sandbox_id=sandbox_id,
+                database_fingerprint=database_fingerprint,
+            )
         )
     else:
         raise ValueError(
             "CHANGEPILOT_PLANNER_MODE must be deterministic_mock or deepseek"
         )
-    model = BudgetedModelGateway(
+    model = AsyncBudgetedModelGateway(
         inner=inner,
         budget=ModelBudget(
             max_calls=2,
@@ -319,9 +374,9 @@ def plan_change(
         ),
         max_retries=1,
     )
-    service = PlanningService(
+    service = AsyncPlanningService(
         graph=build_planning_graph(
-            PlanningNodes(
+            AsyncPlanningNodes(
                 model=model,
                 retriever=HybridRetriever(
                     store=knowledge,
@@ -349,12 +404,16 @@ def plan_change(
         service_id=request.service_id,
         current_version=request.current_version,
         target_version=request.target_version,
+        pull_request_url=request.pull_request_url,
         change_summary=request.change_summary,
         success_conditions=request.success_conditions,
         constraints=request.constraints,
     )
     try:
-        result = service.start(planning_request, session_id=request_id)
+        result = await service.start(
+            planning_request,
+            session_id=request_id,
+        )
         prepared_payload = None
         if isinstance(result, PlanReady):
             prepared_payload = service.prepare_workflow(
@@ -366,6 +425,7 @@ def plan_change(
             result=result,
             mode=mode,
             records=usage.records,
+            tool_records=model.traces,
         )
         if isinstance(result, ClarificationRequired):
             return AgentPlanningOutcome(
@@ -465,6 +525,7 @@ def _planning_trace(
     result: object,
     mode: str,
     records: list[object],
+    tool_records: tuple[object, ...] = (),
 ) -> PlanningTraceView:
     plan = result.plan if isinstance(result, PlanReady) else None
     evidence = result.evidence if isinstance(result, PlanReady) else ()
@@ -486,6 +547,8 @@ def _planning_trace(
     ]
     if not isinstance(result, ClarificationRequired):
         stages.append("retrieve_knowledge")
+    if tool_records:
+        stages.append("inspect_external_context")
     if calls:
         stages.extend(("generate_plan", "validate_plan"))
     if calls > 1:
@@ -511,6 +574,7 @@ def _planning_trace(
             for item in (
                 request.service_id,
                 request.change_summary,
+                request.pull_request_url,
                 " ".join(request.constraints),
             )
             if item
@@ -535,6 +599,18 @@ def _planning_trace(
             )
             if plan is not None
             else ()
+        ),
+        tool_calls=tuple(
+            PlanningToolCallView(
+                round=record.round,
+                tool_call_id=record.tool_call_id,
+                tool_name=record.tool_name,
+                status=record.status,
+                latency_ms=record.latency_ms,
+                arguments=record.arguments,
+                output_summary=record.output_summary,
+            )
+            for record in tool_records
         ),
         model_usage=PlanningModelUsageView(
             calls=calls,

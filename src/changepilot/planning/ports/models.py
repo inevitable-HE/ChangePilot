@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal, Protocol
 
 from pydantic import Field
@@ -40,3 +41,40 @@ class ModelResponse(PlanningBoundaryModel):
 class ModelGateway(Protocol):
     def generate(self, request: ModelRequest) -> ModelResponse:
         """Return structured output without executing tools."""
+
+
+class AsyncModelGateway(Protocol):
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        """Return structured output through a non-blocking model path."""
+
+
+class ChatToolDefinition(PlanningBoundaryModel):
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+class ChatToolCall(PlanningBoundaryModel):
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+class AsyncChatTurn(PlanningBoundaryModel):
+    content: str | None = None
+    tool_calls: tuple[ChatToolCall, ...] = ()
+    usage: ModelUsage
+    model: str
+    latency_ms: int = Field(ge=0)
+    finish_reason: str
+
+
+class AsyncChatModel(Protocol):
+    async def complete(
+        self,
+        *,
+        messages: tuple[Mapping[str, Any], ...],
+        tools: tuple[ChatToolDefinition, ...],
+        max_output_tokens: int,
+    ) -> AsyncChatTurn:
+        """Return one assistant turn, including native tool calls."""

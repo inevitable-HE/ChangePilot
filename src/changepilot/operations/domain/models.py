@@ -33,6 +33,7 @@ class ChangeRequestInput(OperationsBoundaryModel):
     service_id: str | None = None
     current_version: str | None = None
     target_version: str | None = None
+    pull_request_url: str | None = None
     change_summary: str
     success_conditions: tuple[str, ...] = ()
     constraints: tuple[str, ...] = ()
@@ -55,6 +56,7 @@ class ChangeRequestInput(OperationsBoundaryModel):
         "service_id",
         "current_version",
         "target_version",
+        "pull_request_url",
         "change_summary",
     )
     @classmethod
@@ -128,6 +130,16 @@ class PlanningStepView(OperationsBoundaryModel):
     evidence_refs: tuple[str, ...]
 
 
+class PlanningToolCallView(OperationsBoundaryModel):
+    round: int = Field(ge=1)
+    tool_call_id: str
+    tool_name: str
+    status: Literal["succeeded", "failed"]
+    latency_ms: int = Field(ge=0)
+    arguments: dict[str, Any]
+    output_summary: str
+
+
 class PlanningTraceView(OperationsBoundaryModel):
     session_id: str
     mode: Literal["deterministic_mock", "deepseek"]
@@ -148,6 +160,7 @@ class PlanningTraceView(OperationsBoundaryModel):
     stages: tuple[str, ...]
     evidence: tuple[PlanningEvidenceView, ...]
     steps: tuple[PlanningStepView, ...]
+    tool_calls: tuple[PlanningToolCallView, ...] = ()
     model_usage: PlanningModelUsageView
 
 

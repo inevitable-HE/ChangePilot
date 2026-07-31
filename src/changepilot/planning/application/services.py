@@ -97,3 +97,60 @@ class PlanningService:
         if isinstance(result, PlanReady):
             self._repository.save_plan(session_id, result.plan)
         return result
+
+
+class AsyncPlanningService(PlanningService):
+    async def start(
+        self,
+        request: ChangeRequest,
+        *,
+        session_id: str | None = None,
+    ) -> PlanningResult:
+        selected_id = session_id or self._identifiers()
+        self._repository.create_session(selected_id, request)
+        return await self._run_async(selected_id, request)
+
+    async def answer(
+        self,
+        session_id: str,
+        answers: Mapping[str, object],
+    ) -> PlanningResult:
+        current = self._repository.get_request(session_id)
+        payload = current.model_dump(mode="python")
+        for field, value in answers.items():
+            if field not in ChangeRequest.model_fields:
+                raise ValueError(f"unknown clarification field {field!r}")
+            if (
+                field in {"success_conditions", "constraints"}
+                and isinstance(value, str)
+            ):
+                value = (value,)
+            payload[field] = value
+        updated = ChangeRequest.model_validate(payload)
+        self._repository.update_request(session_id, updated)
+        return await self._run_async(session_id, updated)
+
+    async def _run_async(
+        self,
+        session_id: str,
+        request: ChangeRequest,
+    ) -> PlanningResult:
+        attempt_no = self._repository.next_attempt_number(session_id)
+        plan_version = self._repository.next_plan_version(session_id)
+        output = await self._graph.ainvoke(
+            {
+                "session_id": session_id,
+                "request": request,
+                "plan_version": plan_version,
+            }
+        )
+        result = output["result"]
+        self._repository.save_attempt(
+            session_id,
+            attempt_no,
+            request,
+            result,
+        )
+        if isinstance(result, PlanReady):
+            self._repository.save_plan(session_id, result.plan)
+        return result

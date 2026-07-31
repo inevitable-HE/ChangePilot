@@ -70,6 +70,21 @@ The Agent observes requests, evidence, and system state; reasons over a
 goal-directed plan; acts through versioned tools; and uses results to continue,
 compensate, recover, or stop.
 
+## Using GitHub PR Context
+
+The change form accepts an optional GitHub pull request URL. Offline mode keeps
+the context without accessing the network. In online DeepSeek mode, the model
+may call `github.inspect_pull_request` to read the PR title, branches, changed
+files, and CI checks.
+
+The console displays actual calls under **External tool calls** and Runbook
+citations under **RAG evidence**. Both inform planning, but neither can bypass
+the final tool allowlist, risk policy, or approval validation.
+
+The GitHub integration is read-only and accepts only canonical
+`https://github.com/.../pull/...` URLs. It cannot merge a PR, change code,
+trigger workflows, or execute a release.
+
 ## Reading the Console
 
 Start with the run orientation at the top of the center workspace:
