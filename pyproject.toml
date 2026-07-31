@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "changepilot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Bounded change-planning agent with a reliable workflow runtime."
 requires-python = ">=3.12"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.14,<2",
     "langgraph>=1.0,<2",
     "openai>=2.0,<3",
+    "httpx>=0.28,<1",
     "pyyaml>=6.0,<7",
     "fastapi>=0.116,<1",
     "uvicorn>=0.35,<1",

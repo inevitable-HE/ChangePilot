@@ -105,6 +105,27 @@ Open `http://127.0.0.1:8000/docs` for the resource API. The V1 endpoint drives
 the isolated order-service scenarios and never accepts arbitrary SQL, shell
 commands, tool calls, or production paths.
 
+## GitHub PR Context and Native Tool Calling
+
+V2 request payloads accept an optional `pull_request_url`. In DeepSeek mode,
+LangGraph runs asynchronously and the model may call the registered
+`github.inspect_pull_request` function to read PR metadata, changed files, and
+CI checks before returning its final `ChangePlan`. The planning trace records
+each call separately from RAG evidence.
+
+```powershell
+$env:CHANGEPILOT_PLANNER_MODE = "deepseek"
+$env:CHANGEPILOT_DEEPSEEK_API_KEY = "..."
+$env:CHANGEPILOT_GITHUB_TOKEN = "..." # optional for public repositories
+```
+
+The discovery registry is intentionally read-only. It accepts only canonical
+`https://github.com/{owner}/{repository}/pull/{number}` URLs, does not follow
+redirects, rejects unknown tools, and limits call rounds. Native Function
+Calling cannot execute SQL, shell commands, deployments, or approvals; final
+plans still pass deterministic schema, tool, evidence, risk, and compensation
+validation before the reliable runtime sees them.
+
 ## Operations Console
 
 Keep the API running, then start the React console in a second terminal:
@@ -239,9 +260,14 @@ workflow-mapping path. To let DeepSeek propose console plans explicitly:
 $env:CHANGEPILOT_PLANNER_MODE = "deepseek"
 ```
 
-`BudgetedModelGateway` enforces call, token, and optional estimated-cost limits,
-caches identical requests, and allows a bounded retry count. The live smoke
-test is skipped by default. To spend at most one small request deliberately:
+When a request includes a PR URL, this mode also enables the async native
+Function Calling loop. `CHANGEPILOT_GITHUB_TOKEN` is optional for public
+repositories and recommended to avoid anonymous API rate limits.
+
+`AsyncBudgetedModelGateway` enforces logical planning-call, token, and optional
+estimated-cost limits, caches identical requests, and allows a bounded retry
+count. Native tool rounds are independently capped. The live smoke test is
+skipped by default. To spend at most one small request deliberately:
 
 ```powershell
 $env:CHANGEPILOT_RUN_LIVE_LLM = "1"
@@ -263,9 +289,10 @@ git diff --check
 ```
 
 See `docs/en/architecture/agent-planning-and-knowledge.md` for the Agent boundary
-and `docs/en/architecture/change-execution-sandbox.md` for the local execution and
-recovery scenarios. Runtime transactions, recovery, approval, compensation,
-and audit behavior are documented in
+and `docs/en/architecture/async-tool-calling-and-github.md` for the async native
+tool loop. Local execution and recovery scenarios are in
+`docs/en/architecture/change-execution-sandbox.md`. Runtime transactions,
+recovery, approval, compensation, and audit behavior are documented in
 `docs/en/architecture/reliable-workflow-core.md`. The Phase 4 operator and
 evaluation boundary is described in
 `docs/en/architecture/operations-console-and-evaluation.md`.

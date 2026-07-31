@@ -17,6 +17,7 @@ nav = [
     { "架构总览" = "architecture/index.md" },
     { "可靠工作流内核" = "architecture/reliable-workflow-core.md" },
     { "Agent 规划与知识检索" = "architecture/agent-planning-and-knowledge.md" },
+    { "异步工具调用与 GitHub 上下文" = "architecture/async-tool-calling-and-github.md" },
     { "本地执行沙箱" = "architecture/change-execution-sandbox.md" },
     { "运营控制台与评测" = "architecture/operations-console-and-evaluation.md" },
   ] },

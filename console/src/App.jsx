@@ -42,6 +42,7 @@ const CHINESE_COPY = Object.freeze({
   "Structured request": "结构化请求",
   Close: "关闭",
   "Change summary": "变更说明",
+  "GitHub pull request (optional)": "GitHub Pull Request（可选）",
   "Upgrade the order service and database schema.": "升级订单服务与数据库 Schema。",
   Service: "服务",
   Version: "版本",
@@ -158,6 +159,8 @@ const CHINESE_COPY = Object.freeze({
   "Active safeguards": "已生效的安全控制",
   "Agent planning trace": "Agent 规划轨迹",
   "RAG evidence": "RAG 检索证据",
+  "External tool calls": "外部工具调用",
+  "No external tools were called.": "本次规划未调用外部工具。",
   "The request was normalized, grounded in runbooks, converted into a tool-bound plan, and validated before execution.": "请求经过规范化、操作手册检索、工具绑定计划生成和执行前校验。",
   "Planning stages": "规划阶段",
   "Validation passed": "校验通过",
@@ -171,6 +174,7 @@ const CHINESE_COPY = Object.freeze({
   "normalize request": "规范化请求",
   "check required context": "检查必要上下文",
   "retrieve knowledge": "检索知识",
+  "inspect external context": "检查外部上下文",
   "generate plan": "生成计划",
   "validate plan": "校验计划",
   "repair plan": "修复计划",
@@ -404,12 +408,14 @@ function NewChangeDialog({ open, onClose, onCreated }) {
   const { t } = useLanguage();
   const [scenario, setScenario] = useState("success");
   const [summary, setSummary] = useState(() => t("Upgrade the order service and database schema."));
+  const [pullRequestUrl, setPullRequestUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     if (!open) {
       setScenario("success");
       setSummary(t("Upgrade the order service and database schema."));
+      setPullRequestUrl("");
     }
   }, [open, t]);
   if (!open) return null;
@@ -426,6 +432,7 @@ function NewChangeDialog({ open, onClose, onCreated }) {
           service_id: "order-service",
           current_version: "v1",
           target_version: readiness ? "v1" : "v2",
+          pull_request_url: pullRequestUrl.trim() || null,
           change_summary: summary,
           success_conditions: [t(readiness ? "Service and database readiness is reported." : "V2 health and order smoke checks pass")],
           constraints: [t(readiness ? "Perform read-only checks only." : "Require approval before schema migration")],
@@ -454,6 +461,15 @@ function NewChangeDialog({ open, onClose, onCreated }) {
         <label>
           {t("Change summary")}
           <textarea value={summary} onChange={(event) => setSummary(event.target.value)} rows={3} />
+        </label>
+        <label>
+          {t("GitHub pull request (optional)")}
+          <input
+            type="url"
+            placeholder="https://github.com/owner/repository/pull/123"
+            value={pullRequestUrl}
+            onChange={(event) => setPullRequestUrl(event.target.value)}
+          />
         </label>
         <div className="fixed-fields">
           <label>{t("Service")}<input value="order-service" readOnly /></label>
@@ -592,6 +608,19 @@ function PlanningTracePanel({ planning }) {
             <span key={stage}><Check size={12} /> {t(stage.replaceAll("_", " "))}</span>
           ))}
         </div>
+      </div>
+      <div className="tool-call-list">
+        <span className="eyebrow"><GitBranch size={13} /> {t("External tool calls")} ({planning.tool_calls?.length || 0})</span>
+        {!planning.tool_calls?.length && <p className="quiet">{t("No external tools were called.")}</p>}
+        {planning.tool_calls?.map((call) => (
+          <article key={call.tool_call_id}>
+            <div>
+              <strong>{call.tool_name}</strong>
+              <code>{call.status} · {call.latency_ms} ms</code>
+            </div>
+            <p>{call.output_summary}</p>
+          </article>
+        ))}
       </div>
       <div className="evidence-list">
         <span className="eyebrow"><BookOpenCheck size={13} /> {t("RAG evidence")} ({planning.evidence.length})</span>

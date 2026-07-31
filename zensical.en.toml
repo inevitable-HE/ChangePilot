@@ -17,6 +17,7 @@ nav = [
     { "Overview" = "architecture/index.md" },
     { "Reliable Workflow Core" = "architecture/reliable-workflow-core.md" },
     { "Agent Planning and Knowledge" = "architecture/agent-planning-and-knowledge.md" },
+    { "Async Tool Calling and GitHub Context" = "architecture/async-tool-calling-and-github.md" },
     { "Change Execution Sandbox" = "architecture/change-execution-sandbox.md" },
     { "Operations Console and Evaluation" = "architecture/operations-console-and-evaluation.md" },
   ] },

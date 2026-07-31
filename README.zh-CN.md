@@ -99,6 +99,25 @@ $env:CHANGEPILOT_OPERATIONS_ROOT = ".operations"
 启动后访问 `http://127.0.0.1:8000/docs` 查看资源型 API。V1 只驱动隔离的
 订单服务演示场景，不接受任意 SQL、Shell 命令、工具调用或生产环境路径。
 
+## GitHub PR 上下文与原生 Tool Calling
+
+V2 请求可附带 `pull_request_url`。在 DeepSeek 模式下，LangGraph 通过异步
+链路运行；模型可以原生调用已注册的 `github.inspect_pull_request`，读取 PR
+元数据、变更文件和 CI Check，再返回最终 `ChangePlan`。规划轨迹会把每次
+Function Calling 与 RAG 证据分开展示。
+
+```powershell
+$env:CHANGEPILOT_PLANNER_MODE = "deepseek"
+$env:CHANGEPILOT_DEEPSEEK_API_KEY = "..."
+$env:CHANGEPILOT_GITHUB_TOKEN = "..." # 公共仓库可不设置
+```
+
+发现工具注册表只允许只读动作，并且只接受规范的
+`https://github.com/{owner}/{repository}/pull/{number}` URL，不跟随重定向，
+拒绝未知工具并限制调用轮次。Function Calling 不能执行 SQL、Shell、部署或
+审批；最终计划仍要通过确定性的 Schema、工具、证据、风险与补偿校验，才能
+进入可靠工作流。
+
 ## 运营控制台
 
 保持 API 运行，并在另一个终端启动 React 控制台：
@@ -225,9 +244,13 @@ $env:CHANGEPILOT_LLM_TIMEOUT_SECONDS = "30"
 $env:CHANGEPILOT_PLANNER_MODE = "deepseek"
 ```
 
-`BudgetedModelGateway` 会限制调用次数、Token 和可选的预估费用，对相同请求
-使用缓存，并只允许有限次数重试。在线冒烟测试默认跳过。需要主动花费一次
-小额请求时执行：
+当请求包含 PR URL 时，该模式同时启用异步原生 Function Calling。
+公共仓库可以不设置 `CHANGEPILOT_GITHUB_TOKEN`，但建议设置以避免匿名 API
+频率限制。
+
+`AsyncBudgetedModelGateway` 会限制逻辑规划调用、Token 和可选的预估费用，
+对相同请求使用缓存，并只允许有限次数重试；工具调用轮次另有独立上限。
+在线冒烟测试默认跳过。需要主动花费一次小额请求时执行：
 
 ```powershell
 $env:CHANGEPILOT_RUN_LIVE_LLM = "1"
@@ -251,6 +274,7 @@ git diff --check
 架构说明：
 
 - `docs/zh/architecture/agent-planning-and-knowledge.md`：Agent 边界与知识检索。
+- `docs/zh/architecture/async-tool-calling-and-github.md`：异步原生工具与 GitHub 上下文。
 - `docs/zh/architecture/change-execution-sandbox.md`：本地执行与恢复场景。
 - `docs/zh/architecture/reliable-workflow-core.md`：事务、审批、恢复、补偿与审计。
 - `docs/zh/architecture/operations-console-and-evaluation.md`：运营控制台与评测边界。
