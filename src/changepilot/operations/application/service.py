@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from changepilot.operations.application.planning import plan_change
 from changepilot.operations.domain.models import (
     ApprovalCommand,
     ChangeRequestInput,
@@ -18,6 +19,7 @@ from changepilot.operations.domain.models import (
     PlanStepView,
     PlanToolView,
     PlanView,
+    PlanningTraceView,
     RecoveryCommand,
     RequestStatus,
     RunGuidance,
@@ -28,7 +30,6 @@ from changepilot.operations.domain.models import (
 from changepilot.sandbox.application.runtime import (
     SandboxWorkflowRuntime,
     make_sandbox_runtime,
-    order_upgrade_sandbox_definition,
 )
 from changepilot.sandbox.domain.faults import FaultSpec, FaultType
 
@@ -60,6 +61,7 @@ class _StoredRequest(BaseModel):
 
     view: ChangeRequestView
     definition_payload: dict[str, Any] | None = None
+    planning_trace: PlanningTraceView | None = None
 
 
 class _Manifest(BaseModel):
@@ -119,13 +121,42 @@ class OperationsService:
             try:
                 runtime.driver.start()
                 initial = runtime.manager.inspect(runtime.sandbox_id)
-                definition = order_upgrade_sandbox_definition(
-                    runtime.sandbox_id,
-                    initial.database_fingerprint,
+                planning = plan_change(
+                    root=self._run_root(request_id) / "planning",
+                    request_id=request_id,
+                    request=request,
+                    tools=runtime.tools.registry,
+                    sandbox_id=runtime.sandbox_id,
+                    database_fingerprint=initial.database_fingerprint,
                 )
+                if planning.prepared_payload is None:
+                    runtime.close()
+                    status = (
+                        RequestStatus.CLARIFICATION_REQUIRED
+                        if planning.clarification_questions
+                        else RequestStatus.REJECTED
+                    )
+                    view = ChangeRequestView(
+                        request_id=request_id,
+                        status=status,
+                        submitted_at=submitted_at,
+                        request=request,
+                        clarification_questions=planning.clarification_questions,
+                        errors=planning.errors,
+                    )
+                    self._store(
+                        _StoredRequest(
+                            view=view,
+                            planning_trace=planning.trace,
+                        )
+                    )
+                    return view
+                definition = planning.prepared_payload
                 run_id = runtime.workflow.create_run(definition)
                 runtime.selected_run[0] = run_id
-                runtime.run_until("waiting_approval")
+                runtime.run_until_any(
+                    ("waiting_approval", *_TERMINAL_STATES)
+                )
             except BaseException:
                 runtime.close()
                 raise
@@ -141,6 +172,7 @@ class OperationsService:
                 _StoredRequest(
                     view=view,
                     definition_payload=definition,
+                    planning_trace=planning.trace,
                 )
             )
             return view
@@ -175,6 +207,13 @@ class OperationsService:
         with self._lock:
             return self._snapshot(run_id)
 
+    def get_planning_trace(self, run_id: str) -> PlanningTraceView:
+        with self._lock:
+            trace = self._stored_for_run(run_id).planning_trace
+            if trace is None:
+                raise LookupError(f"run {run_id} has no Agent planning trace")
+            return trace
+
     def get_guidance(self, run_id: str) -> RunGuidance:
         with self._lock:
             snapshot = self._snapshot(run_id)
@@ -202,12 +241,20 @@ class OperationsService:
                 report_available=snapshot.summary.state in _TERMINAL_STATES,
                 stages=_guidance_stages(snapshot),
                 safety_controls=(
-                    "local_sandbox",
-                    "fixed_tool_contracts",
-                    "approval_before_migration",
-                    "idempotent_effects",
-                    "compensation_available",
-                    "audit_persisted",
+                    (
+                        "local_sandbox",
+                        "fixed_tool_contracts",
+                        "audit_persisted",
+                    )
+                    if request.scenario is DemoScenario.READINESS
+                    else (
+                        "local_sandbox",
+                        "fixed_tool_contracts",
+                        "approval_before_migration",
+                        "idempotent_effects",
+                        "compensation_available",
+                        "audit_persisted",
+                    )
                 ),
             )
 
@@ -218,6 +265,14 @@ class OperationsService:
             if payload is None:
                 raise LookupError(f"run {run_id} has no prepared plan")
             snapshot = self._snapshot(run_id)
+            trace_steps = {
+                step.step_id: step
+                for step in (
+                    stored.planning_trace.steps
+                    if stored.planning_trace is not None
+                    else ()
+                )
+            }
             steps = tuple(
                 PlanStepView(
                     step_id=str(step["id"]),
@@ -231,13 +286,27 @@ class OperationsService:
                         if step.get("compensation_tool") is not None
                         else None
                     ),
-                    rationale=_plan_annotations(str(step["tool"]["name"]))[0],
-                    validation_intent=_plan_annotations(
-                        str(step["tool"]["name"])
-                    )[1],
-                    evidence_refs=_plan_annotations(
-                        str(step["tool"]["name"])
-                    )[2],
+                    rationale=(
+                        trace_steps[str(step["id"])].rationale
+                        if str(step["id"]) in trace_steps
+                        else _plan_annotations(
+                            str(step["tool"]["name"])
+                        )[0]
+                    ),
+                    validation_intent=(
+                        trace_steps[str(step["id"])].validation_intent
+                        if str(step["id"]) in trace_steps
+                        else _plan_annotations(
+                            str(step["tool"]["name"])
+                        )[1]
+                    ),
+                    evidence_refs=(
+                        trace_steps[str(step["id"])].evidence_refs
+                        if str(step["id"]) in trace_steps
+                        else _plan_annotations(
+                            str(step["tool"]["name"])
+                        )[2]
+                    ),
                 )
                 for step in payload["steps"]
             )
@@ -336,18 +405,37 @@ class OperationsService:
             stored = self._stored_for_run(run_id)
             plan = self.get_plan(run_id)
             events = self.get_events(run_id)
+            planning = stored.planning_trace
+            usage = (
+                planning.model_usage
+                if planning is not None
+                else None
+            )
             report = _redact(
                 {
                     "report_version": "1.0",
                     "request": stored.view.model_dump(mode="json"),
                     "plan": plan.model_dump(mode="json"),
+                    "planning": (
+                        planning.model_dump(mode="json")
+                        if planning is not None
+                        else None
+                    ),
                     "run": snapshot.model_dump(mode="json"),
                     "events": list(events.events),
                     "model_usage": {
-                        "calls": 0,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "estimated_cost": 0.0,
+                        "calls": usage.calls if usage is not None else 0,
+                        "prompt_tokens": (
+                            usage.input_tokens if usage is not None else 0
+                        ),
+                        "completion_tokens": (
+                            usage.output_tokens if usage is not None else 0
+                        ),
+                        "estimated_cost_microunits": (
+                            usage.estimated_cost_microunits
+                            if usage is not None
+                            else 0
+                        ),
                     },
                 }
             )
@@ -448,8 +536,24 @@ class OperationsService:
         errors: list[str] = []
         if request.service_id != "order-service":
             errors.append("V1 supports only the isolated order-service demo")
-        if request.current_version != "v1" or request.target_version != "v2":
-            errors.append("V1 supports only the v1 to v2 upgrade")
+        supported_versions = (
+            request.current_version == "v1"
+            and request.target_version in {"v1", "v2"}
+        )
+        if not supported_versions:
+            errors.append(
+                "V1 supports a v1 readiness check or a v1 to v2 upgrade"
+            )
+        if (
+            request.scenario is DemoScenario.READINESS
+            and request.target_version != "v1"
+        ):
+            errors.append("readiness scenario must remain on version v1")
+        if (
+            request.scenario is not DemoScenario.READINESS
+            and request.target_version != "v2"
+        ):
+            errors.append("upgrade scenarios require target version v2")
         return tuple(errors)
 
     @staticmethod
@@ -542,6 +646,19 @@ def _guidance_codes(snapshot: RunSnapshot) -> tuple[str, str]:
 def _guidance_stages(
     snapshot: RunSnapshot,
 ) -> tuple[GuidanceStageView, ...]:
+    if snapshot.summary.state == "succeeded":
+        return tuple(
+            GuidanceStageView(stage_id=stage_id, state="complete")
+            for stage_id in (
+                "request",
+                "plan",
+                "precheck",
+                "approval",
+                "execution",
+                "verification",
+                "outcome",
+            )
+        )
     step_states = {
         str(step["step_id"]): str(step["state"])
         for step in snapshot.steps

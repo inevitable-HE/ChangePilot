@@ -92,6 +92,22 @@ class SandboxWorkflowRuntime:
             f"run did not reach {expected_state!r} within {limit} cycles"
         )
 
+    def run_until_any(
+        self,
+        expected_states: tuple[str, ...],
+        *,
+        limit: int = 400,
+    ) -> str:
+        for _ in range(limit):
+            state = self.query.get_run(self.selected_run[0]).state
+            if state in expected_states:
+                return state
+            self.driver.run_once()
+            time.sleep(0.001)
+        raise AssertionError(
+            f"run did not reach one of {expected_states!r} within {limit} cycles"
+        )
+
     def run_until_step(
         self,
         step_id: str,

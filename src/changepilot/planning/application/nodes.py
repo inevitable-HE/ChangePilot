@@ -43,12 +43,16 @@ class PlanningNodes:
         validator: PlanValidator,
         prompt_version: str,
         tool_policy_version: str,
+        tool_catalog: tuple[dict[str, object], ...] = (),
+        retrieval_hints: tuple[str, ...] = (),
     ) -> None:
         self._model = model
         self._retriever = retriever
         self._validator = validator
         self._prompt_version = prompt_version
         self._tool_policy_version = tool_policy_version
+        self._tool_catalog = tool_catalog
+        self._retrieval_hints = retrieval_hints
 
     def normalize_request(self, state: PlanningState) -> dict[str, object]:
         request = state["request"]
@@ -103,6 +107,7 @@ class PlanningNodes:
                 request.service_id,
                 request.change_summary,
                 " ".join(request.constraints),
+                " ".join(self._retrieval_hints),
             )
             if item
         )
@@ -163,6 +168,7 @@ class PlanningNodes:
                 "prompt_version": self._prompt_version,
                 "tool_policy_version": self._tool_policy_version,
             },
+            "allowed_tools": list(self._tool_catalog),
         }
         if repair:
             user_payload["invalid_payload"] = state.get("raw_payload", {})

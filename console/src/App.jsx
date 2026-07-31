@@ -1,9 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   ArrowRight,
   BarChart3,
+  BookOpenCheck,
+  BrainCircuit,
   Check,
   ChevronDown,
   CircleDot,
@@ -50,6 +52,11 @@ const CHINESE_COPY = Object.freeze({
   "Compensate service and schema to V1.": "将服务与 Schema 补偿回 V1。",
   "Restart recovery": "重启恢复",
   "Recover a committed migration result.": "恢复已经提交的迁移结果。",
+  "Readiness assessment": "就绪度检查",
+  "Inspect current service and database state without changes.": "只读检查当前服务和数据库状态，不执行变更。",
+  "Assess order service and database readiness.": "评估订单服务与数据库的变更就绪度。",
+  "Service and database readiness is reported.": "输出服务与数据库就绪度报告。",
+  "Perform read-only checks only.": "仅允许执行只读检查。",
   Cancel: "取消",
   "Create plan": "创建计划",
   Workspace: "工作区",
@@ -149,6 +156,25 @@ const CHINESE_COPY = Object.freeze({
   "Success condition": "成功条件",
   Constraints: "约束条件",
   "Active safeguards": "已生效的安全控制",
+  "Agent planning trace": "Agent 规划轨迹",
+  "RAG evidence": "RAG 检索证据",
+  "The request was normalized, grounded in runbooks, converted into a tool-bound plan, and validated before execution.": "请求经过规范化、操作手册检索、工具绑定计划生成和执行前校验。",
+  "Planning stages": "规划阶段",
+  "Validation passed": "校验通过",
+  "Model calls": "模型调用",
+  "Tokens": "Token",
+  "Plan version": "计划版本",
+  "Knowledge snapshot": "知识快照",
+  "No retrieved evidence was recorded.": "未记录检索证据。",
+  "lexical rank {rank}": "关键词排序 #{rank}",
+  "vector rank {rank}": "向量排序 #{rank}",
+  "normalize request": "规范化请求",
+  "check required context": "检查必要上下文",
+  "retrieve knowledge": "检索知识",
+  "generate plan": "生成计划",
+  "validate plan": "校验计划",
+  "repair plan": "修复计划",
+  "validate repaired plan": "校验修复后计划",
   "Waiting for migration approval": "等待数据库迁移审批",
   "The requested change completed successfully": "请求的变更已成功完成",
   "The failed change was compensated": "失败的变更已完成补偿",
@@ -381,7 +407,10 @@ function NewChangeDialog({ open, onClose, onCreated }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (!open) setSummary(t("Upgrade the order service and database schema."));
+    if (!open) {
+      setScenario("success");
+      setSummary(t("Upgrade the order service and database schema."));
+    }
   }, [open, t]);
   if (!open) return null;
 
@@ -390,15 +419,16 @@ function NewChangeDialog({ open, onClose, onCreated }) {
     setBusy(true);
     setError("");
     try {
+      const readiness = scenario === "readiness";
       const result = await api("/api/requests", {
         method: "POST",
         body: JSON.stringify({
           service_id: "order-service",
           current_version: "v1",
-          target_version: "v2",
+          target_version: readiness ? "v1" : "v2",
           change_summary: summary,
-          success_conditions: [t("V2 health and order smoke checks pass")],
-          constraints: [t("Require approval before schema migration")],
+          success_conditions: [t(readiness ? "Service and database readiness is reported." : "V2 health and order smoke checks pass")],
+          constraints: [t(readiness ? "Perform read-only checks only." : "Require approval before schema migration")],
           scenario,
         }),
       });
@@ -427,7 +457,7 @@ function NewChangeDialog({ open, onClose, onCreated }) {
         </label>
         <div className="fixed-fields">
           <label>{t("Service")}<input value="order-service" readOnly /></label>
-          <label>{t("Version")}<input value="v1 → v2" readOnly /></label>
+          <label>{t("Version")}<input value={scenario === "readiness" ? "v1 (read only)" : "v1 → v2"} readOnly /></label>
         </div>
         <fieldset>
           <legend>{t("Execution scenario")}</legend>
@@ -435,9 +465,19 @@ function NewChangeDialog({ open, onClose, onCreated }) {
             ["success", "Successful upgrade", "Migrate, deploy and validate V2."],
             ["compensation", "Health failure", "Compensate service and schema to V1."],
             ["recovery", "Restart recovery", "Recover a committed migration result."],
+            ["readiness", "Readiness assessment", "Inspect current service and database state without changes."],
           ].map(([value, title, detail]) => (
             <label className="scenario-option" key={value}>
-              <input type="radio" name="scenario" value={value} checked={scenario === value} onChange={() => setScenario(value)} />
+              <input
+                type="radio"
+                name="scenario"
+                value={value}
+                checked={scenario === value}
+                onChange={() => {
+                  setScenario(value);
+                  setSummary(t(value === "readiness" ? "Assess order service and database readiness." : "Upgrade the order service and database schema."));
+                }}
+              />
               <span><strong>{t(title)}</strong><small>{t(detail)}</small></span>
             </label>
           ))}
@@ -524,7 +564,57 @@ function RunOrientation({ guidance }) {
   );
 }
 
-function PlanWorkspace({ snapshot, plan, guidance, activeStep, setActiveStep }) {
+function PlanningTracePanel({ planning }) {
+  const { t } = useLanguage();
+  if (!planning) return <div className="planning-loading"><LoaderCircle className="spin" size={17} /></div>;
+  return (
+    <section className="planning-trace">
+      <header className="planning-heading">
+        <div className="planning-title">
+          <BrainCircuit size={18} />
+          <div>
+            <span className="eyebrow">{t("Agent planning trace")}</span>
+            <p>{t("The request was normalized, grounded in runbooks, converted into a tool-bound plan, and validated before execution.")}</p>
+          </div>
+        </div>
+        <Status value={planning.validation_status === "passed" ? "succeeded" : "failed"} />
+      </header>
+      <dl className="planning-metrics">
+        <div><dt>{t("Plan version")}</dt><dd>v{planning.plan_version ?? "—"}</dd></div>
+        <div><dt>{t("Model calls")}</dt><dd>{planning.model_usage.calls}</dd></div>
+        <div><dt>{t("Tokens")}</dt><dd>{planning.model_usage.total_tokens}</dd></div>
+        <div><dt>{t("Knowledge snapshot")}</dt><dd className="mono">{planning.knowledge_snapshot_digest.slice(0, 10) || "—"}</dd></div>
+      </dl>
+      <div className="planning-stages">
+        <span className="eyebrow">{t("Planning stages")}</span>
+        <div>
+          {planning.stages.map((stage) => (
+            <span key={stage}><Check size={12} /> {t(stage.replaceAll("_", " "))}</span>
+          ))}
+        </div>
+      </div>
+      <div className="evidence-list">
+        <span className="eyebrow"><BookOpenCheck size={13} /> {t("RAG evidence")} ({planning.evidence.length})</span>
+        {planning.evidence.length === 0 && <p className="quiet">{t("No retrieved evidence was recorded.")}</p>}
+        {planning.evidence.slice(0, 3).map((evidence) => (
+          <article key={evidence.chunk_id}>
+            <div>
+              <strong>{evidence.document_id}@{evidence.document_version}</strong>
+              <code>{evidence.location}</code>
+            </div>
+            <p>{evidence.excerpt}</p>
+            <small>
+              {evidence.lexical_rank && t("lexical rank {rank}", { rank: evidence.lexical_rank })}
+              {evidence.vector_rank && ` · ${t("vector rank {rank}", { rank: evidence.vector_rank })}`}
+            </small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PlanWorkspace({ snapshot, plan, planning, guidance, activeStep, setActiveStep }) {
   const { t } = useLanguage();
   const stateById = new Map(snapshot?.steps?.map((step) => [step.step_id, step.state]));
   return (
@@ -542,6 +632,7 @@ function PlanWorkspace({ snapshot, plan, guidance, activeStep, setActiveStep }) 
         <span><History size={15} /> {t("{count} events", { count: snapshot?.summary.last_event_sequence ?? 0 })}</span>
       </div>
       <RunOrientation guidance={guidance} />
+      <PlanningTracePanel planning={planning} />
       <section className="step-list" aria-label={t("Execution plan")}>
         {plan?.steps.map((step, index) => {
           const state = stateById.get(step.step_id) || "pending";
@@ -743,8 +834,10 @@ export default function App() {
   });
   const [runs, setRuns] = useState([]);
   const [selected, setSelected] = useState(null);
+  const selectedRef = useRef(null);
   const [snapshot, setSnapshot] = useState(null);
   const [plan, setPlan] = useState(null);
+  const [planning, setPlanning] = useState(null);
   const [guidance, setGuidance] = useState(null);
   const [events, setEvents] = useState([]);
   const [activeStep, setActiveStep] = useState(null);
@@ -780,23 +873,31 @@ export default function App() {
   const loadSelected = useCallback(async (runId) => {
     if (!runId) return;
     try {
-      const [nextSnapshot, nextPlan, nextGuidance, nextEvents] = await Promise.all([
+      const [nextSnapshot, nextPlan, nextPlanning, nextGuidance, nextEvents] = await Promise.all([
         api(`/api/runs/${runId}`),
         api(`/api/runs/${runId}/plan`),
+        api(`/api/runs/${runId}/planning`),
         api(`/api/runs/${runId}/guidance`),
         api(`/api/runs/${runId}/events`),
       ]);
+      if (selectedRef.current !== runId) return;
       setSnapshot(nextSnapshot);
       setPlan(nextPlan);
+      setPlanning(nextPlanning);
       setGuidance(nextGuidance);
       setEvents(nextEvents.events);
-      setActiveStep((current) => current || nextPlan.steps[0]?.step_id);
+      setActiveStep(nextPlan.steps[0]?.step_id || null);
       setError("");
     } catch (failure) { setError(failure.message); }
   }, []);
 
   useEffect(() => { loadRuns(); api("/api/evaluations").then(setEvaluations).catch(() => {}); }, [loadRuns]);
-  useEffect(() => { setGuidance(null); loadSelected(selected); }, [selected, loadSelected]);
+  useEffect(() => {
+    selectedRef.current = selected;
+    setGuidance(null);
+    setPlanning(null);
+    loadSelected(selected);
+  }, [selected, loadSelected]);
   useEffect(() => {
     window.localStorage.setItem("changepilot-language", language);
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
@@ -874,7 +975,7 @@ export default function App() {
           runs.length === 0 && !loading ? <EmptyState onCreate={() => setDialog(true)} /> :
           <div className="operations-grid">
             <RunList runs={runs} selected={selected} filter={filter} setFilter={setFilter} onSelect={setSelected} onCreate={() => setDialog(true)} loading={loading} />
-            <PlanWorkspace snapshot={snapshot} plan={plan} guidance={guidance} activeStep={activeStep} setActiveStep={setActiveStep} />
+            <PlanWorkspace snapshot={snapshot} plan={plan} planning={planning} guidance={guidance} activeStep={activeStep} setActiveStep={setActiveStep} />
             <AuditPanel snapshot={snapshot} events={events} selectedEvent={selectedEvent} setSelectedEvent={setSelectedEvent} onDecision={decide} onRecover={recover} busy={busy} />
           </div>
         )}

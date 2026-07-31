@@ -62,6 +62,25 @@ model-selected recursion, or model-controlled tool execution.
 The handoff uses the existing `WorkflowDefinition.from_mapping()` boundary, so
 model output cannot bypass Phase 1 definition validation.
 
+## Operations Integration
+
+`OperationsService.submit_request()` is the production composition boundary for
+the local prototype. A complete API request creates a planning session, indexes
+the versioned reference runbooks, retrieves evidence, invokes the configured
+model through `BudgetedModelGateway`, validates the resulting plan, maps it to a
+workflow definition, and only then starts the sandbox runtime.
+
+The operations API exposes a read-only planning trace containing stage names,
+evidence citations, validation status, plan version, knowledge snapshot, model
+identity, and usage totals. The console renders this separately from the
+authoritative execution audit: planning explains how a proposal was formed;
+workflow events prove what was actually allowed and executed.
+
+The default deterministic model keeps the demo offline and reproducible without
+short-circuiting the real planning graph. Setting
+`CHANGEPILOT_PLANNER_MODE=deepseek` swaps only the model gateway; retrieval,
+validation, workflow mapping, and execution authority remain unchanged.
+
 ## Knowledge and Evidence
 
 Runbooks carry a stable document ID, immutable version, source, trust level,
@@ -121,7 +140,8 @@ effect execution.
   multi-tenant isolation are not implemented.
 - BGE vectors are scanned in-process and suit a local demonstration, not a
   large production corpus.
-- There is no Web API, authentication service, UI, or production deployment
+- The local Web API and operator UI are single-user demonstrations; there is no
+  authentication service, RBAC, secrets manager, or production deployment
   manifest.
 - Tool implementations in the reference scenario are deterministic fakes.
   Production tools must provide truthful idempotency and recovery probes.

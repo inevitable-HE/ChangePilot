@@ -17,6 +17,7 @@ tmp/
 .demo/
 .eval-results/
 .operations/
+.operations-*/
 .worktrees/
 .superpowers/
 
